@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import mss
+import numpy as np
 from PIL import Image
 
 from .config import RUNS_DIR
@@ -14,6 +15,28 @@ from .dpi import BASELINE_WIDTH
 from .models import Rect
 
 _UNSAFE = re.compile(r"[^0-9A-Za-z一-鿿_-]")
+
+# 空白帧：整块画面几乎全是接近纯白的像素。
+#
+# 小程序是 GPU 合成窗口 —— 焦点丢了就停止渲染，被抬起来或者失去焦点时
+# 会留下一块白屏（内容还没画出来）。这种帧读不出任何东西，必须认出来、
+# 重新激活窗口，而不是拿着一张白图去判断。
+#
+# 阈值卡得很紧（99.9% 近白）：真实页面再空也有上千个非白像素
+# （实测答题页 1.8%、匹配页 1.3%），只有**几乎什么都没画**的帧才算空白。
+_BLANK_WHITE_MIN = 235
+_BLANK_RATIO = 0.999
+
+# 连续多少帧空白就强制刷新窗口（激活 + 重绘）。
+BLANK_REFRESH_ROUNDS = 3
+
+
+def is_blank_frame(image: Image.Image) -> bool:
+    """这一帧是不是几乎全白（窗口还没把内容画出来）。"""
+    arr = np.asarray(image.convert("L"))
+    if arr.size == 0:
+        return True
+    return float((arr >= _BLANK_WHITE_MIN).mean()) >= _BLANK_RATIO
 
 
 def _slug(text: str) -> str:

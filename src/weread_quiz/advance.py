@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 
 from . import abort
-from .capture import grab_screen
+from .capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
 from .click import click_box
 from .models import Rect
 
@@ -118,18 +118,33 @@ def _recheck(region, ocr, hit: TextHit) -> str:
 
 def advance_to_question(region, ocr, recorder, targets,
                          is_question_page, timeout: float = 90.0,
-                         poll_interval: float = 0.3, *, before_click=None) -> bool:
-    """把界面推进到答题页；可在点击前准备，准备完成后仍须重新复核按钮。"""
+                         poll_interval: float = 0.3, *, before_click=None,
+                         refresh=None) -> bool:
+    """把界面推进到答题页；可在点击前准备，准备完成后仍须重新复核按钮。
+
+    refresh：抓到空白帧时的急救回调（重新激活窗口并强制重绘）。
+    """
     targets = tuple(targets)
     last_target = targets[-1] if targets else None
     deadline = time.monotonic() + timeout
     last_seen: list[str] = []
     # 本轮推进中作废的目标（复核时位置对不上）。
     banned: set[str] = set()
+    # 连续读到空白帧的轮数。
+    blank_rounds = 0
 
     while time.monotonic() < deadline:
         abort.check()
         image = grab_screen(region)
+        if is_blank_frame(image):
+            # 窗口刚被抬起来、还没把内容画出来 —— 空白帧读不出任何东西。
+            # 不跳过这一帧（跳过会干等到超时），只记着连续几次好去叫醒窗口。
+            blank_rounds += 1
+            if blank_rounds >= BLANK_REFRESH_ROUNDS and refresh is not None:
+                blank_rounds = 0
+                refresh()
+        else:
+            blank_rounds = 0
         if is_question_page is not None and is_question_page(image):
             return True
 

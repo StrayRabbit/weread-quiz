@@ -9,7 +9,7 @@ from pyautogui import FailSafeException
 
 from . import abort
 from .answer_feedback import SAMPLE_OFFSETS, AnswerFeedback
-from .capture import grab_screen
+from .capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
 from .click import click_box
 from .daily_buttons import find_option_buttons, pick_button
 from .daily_screen import (
@@ -111,6 +111,8 @@ class DailyConfig:
     max_questions: int = DAILY_TOTAL_QUESTIONS
     dry_run: bool = False
     ocr: object | None = None
+    # 抓到空白帧时的急救回调（重新激活小程序窗口）。
+    refresh: object | None = None
 
     def __post_init__(self) -> None:
         # region 类型在运行时是 Rect；这里只做属性存在性检查
@@ -135,6 +137,8 @@ def wait_for_question(cfg: DailyConfig, timeout: float | None = None, *,
     previous = None
     rejected_since = None
     fallback_used = False
+    # 连续读到空白帧的轮数（窗口还没把内容画出来）。
+    blank_rounds = 0
     totals = PhaseTotals()
     local = getattr(cfg.vision, "read_question_local", None)
     local_available = callable(local) and getattr(cfg.vision, "local_ocr_available", None) is not False
@@ -149,6 +153,16 @@ def wait_for_question(cfg: DailyConfig, timeout: float | None = None, *,
         captured_at = time.monotonic()
         image = grab_screen(cfg.region)
         context.polls += 1
+        if is_blank_frame(image):
+            # 窗口还没把内容画出来（GPU 合成窗口失去焦点会停止渲染）——
+            # 空白帧认不出题目，记着连续几次好去叫醒窗口。
+            blank_rounds += 1
+            if blank_rounds >= BLANK_REFRESH_ROUNDS and cfg.refresh is not None:
+                blank_rounds = 0
+                safe_log(cfg.recorder, "等待：连续读到空白帧，重新激活小程序窗口")
+                cfg.refresh()
+        else:
+            blank_rounds = 0
         ready = (is_question_screen(image) and has_rendered_stem(image)
                  and not has_answer_reveal(image))
         totals.add("抓屏+门控", time.monotonic() - captured_at, unit="轮")
@@ -504,6 +518,8 @@ def wait_for_next_question(cfg: DailyConfig, current_image: Image.Image,
     ocr_count = 0
     ocr_seconds = 0.0
     last_at = start
+    # 连续读到空白帧的轮数（窗口还没把内容画出来）。
+    blank_rounds = 0
 
     def finish(status, image, reason):
         if status != "next":
@@ -522,7 +538,18 @@ def wait_for_next_question(cfg: DailyConfig, current_image: Image.Image,
         time.sleep(_POLL_INTERVAL)
         captured_at = time.monotonic()
         candidate = grab_screen(cfg.region)
-        if feedback is not None:
+        blank = is_blank_frame(candidate)
+        if blank:
+            # 空白帧：窗口还没把内容画出来 —— 记着连续几次好去叫醒窗口。
+            blank_rounds += 1
+            if blank_rounds >= BLANK_REFRESH_ROUNDS and cfg.refresh is not None:
+                blank_rounds = 0
+                safe_log(cfg.recorder, "等下一题：连续读到空白帧，重新激活小程序窗口")
+                cfg.refresh()
+        else:
+            blank_rounds = 0
+        if feedback is not None and not blank:
+            # 空白帧没有颜色信息，拿去观察只会误判成"题干变了"。
             feedback.observe(candidate)
         polls += 1
         last_seen = candidate

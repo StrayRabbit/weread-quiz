@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from . import abort
 from .answer_feedback import SAMPLE_OFFSETS, AnswerFeedback
 from .buttons import find_option_buttons, pick_button
-from .capture import grab_screen
+from .capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
 from .click import click_box
 from .errors import (
     AnswerUnavailable,
@@ -435,7 +435,8 @@ def wait_for_question(region, vision, timeout: float = 120.0, verbose: bool = Tr
                        watch: "Stopwatch | None" = None, *,
                        capture_context: PKCaptureContext | None = None,
                        ocr=None, recorder=None,
-                       ocr_fallback_seconds: float | None = None):
+                       ocr_fallback_seconds: float | None = None,
+                       refresh=None):
     """优先本地题号确认首题并交接采集上下文；兼容纯视觉回退，超时返回空结果。"""
     if capture_context is not None:
         capture_context.reset()
@@ -469,6 +470,8 @@ def wait_for_question(region, vision, timeout: float = 120.0, verbose: bool = Tr
     # 视觉模型兜底**只允许一次** —— 一次就要阻塞 5 秒，而单题题窗只有
     # 9~12 秒，再来一次就把它吃光了。
     ocr_fallback_used = False
+    # 连续读到空白帧的轮数（窗口还没把内容画出来）。
+    blank_rounds = 0
     # 兜底额度的轮数门槛。由 ocr_fallback_seconds 换算（配置项
     # PK_OCR_FALLBACK_SECONDS），None 时用模块常量。
     #
@@ -492,6 +495,18 @@ def wait_for_question(region, vision, timeout: float = 120.0, verbose: bool = Tr
         gate_started = time.perf_counter()
         image = grab_screen(region)
         polls += 1
+        if is_blank_frame(image):
+            # 窗口刚被抬起来、还没把内容画出来（GPU 合成窗口失去焦点会
+            # 停止渲染）。空白帧读不出任何东西 —— 记着连续几次好去叫醒窗口。
+            blank_rounds += 1
+            screens["空白帧"] = screens.get("空白帧", 0) + 1
+            if blank_rounds >= BLANK_REFRESH_ROUNDS and refresh is not None:
+                blank_rounds = 0
+                if recorder:
+                    safe_log(recorder, "等待：连续读到空白帧，重新激活小程序窗口")
+                refresh()
+        else:
+            blank_rounds = 0
         template_ok = looks_like_question_template(image)
         rendered = has_rendered_stem(image)
         # 兜底：连续 _GATE_FALLBACK_POLLS 轮不通过就强制问一次模型。
@@ -1316,6 +1331,7 @@ def run_pk(
     next_question_delay: float | None = None,
     ocr=None,
     ocr_fallback_seconds: float | None = None,
+    refresh=None,
 ) -> PKReport:
     """跑完一局 PK。"""
     report = PKReport()
@@ -1331,7 +1347,8 @@ def run_pk(
     current, question = wait_for_question(region, vision, timeout=120.0, verbose=verbose,
                                           watch=watch, capture_context=capture_context,
                                           ocr=ocr, recorder=recorder,
-                                          ocr_fallback_seconds=ocr_fallback_seconds)
+                                          ocr_fallback_seconds=ocr_fallback_seconds,
+                                          refresh=refresh)
     if current is None:
         report.outcome = "error"
         report.error = "没等到答题界面。请确认小程序已点『自动匹配』或『邀请好友」。"

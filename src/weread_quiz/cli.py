@@ -150,7 +150,7 @@ def _make_pk_question_judge(ocr=None):
     return is_question_page
 
 
-def _advance_to_ready(route, region, reader, recorder, ocr=None) -> bool:
+def _advance_to_ready(route, region, reader, recorder, ocr=None, refresh=None) -> bool:
     """把界面推进到答题页。返回 False 表示推进失败（已截图落盘）。"""
     from .daily_screen import is_question_screen
 
@@ -175,6 +175,7 @@ def _advance_to_ready(route, region, reader, recorder, ocr=None) -> bool:
         recorder=recorder,
         targets=route.advance_targets,
         is_question_page=is_question_page,
+        refresh=refresh,
         **options,
     )
     if not ok:
@@ -211,10 +212,11 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
     from .usage import emit_usage, safe_log, usage_since, usage_snapshot
     from .window.finder import find_wechat_window
     from .window.foreground import (
+        bring_to_front,
         clear_topmost,
         move_console_aside,
+        refresh_window,
         restore_console,
-        set_topmost,
     )
 
     init_dpi_awareness()
@@ -250,9 +252,11 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
         cfg, timing_sink=lambda message: safe_log(recorder, message)
     )
     start = usage_snapshot(vision)
-    # 小程序窗口置顶：抓屏按它在屏幕上的位置来，窗口被控制台盖住就抓错画面。
-    if not set_topmost(host.hwnd):
-        print("⚠ 小程序窗口置顶失败 —— 请确认它没有被别的窗口挡住")
+    # 小程序窗口置顶 + 激活：抓屏按它在屏幕上的位置来，窗口被控制台盖住
+    # 就抓错画面。激活是必须的 —— GPU 合成的窗口失去焦点会停止渲染，
+    # 只置顶不激活会留在一块白屏上。
+    if not bring_to_front(host.hwnd):
+        print("⚠ 小程序窗口没能激活 —— 请确认它没有被别的窗口挡住")
     console_moved, console_rect = move_console_aside(region)
     if console_moved:
         print("（控制台压着小程序窗口，已挪开 —— 跑完还原）")
@@ -298,6 +302,7 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
             verbose=True,
             dry_run=dry_run,
             ocr=terminal_ocr,
+            refresh=lambda: refresh_window(host.hwnd),
         )
         if not dry_run:
             # 正式模式才推进 —— dry-run 需要用户已经手动停在答题页。
@@ -306,6 +311,7 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
             if not _advance_to_ready(
                 route, region, reader, recorder,
                 ocr=getattr(reader, "_ocr", None),
+                refresh=lambda: refresh_window(host.hwnd),
             ):
                 return 2
         report = run_daily(daily_cfg)
@@ -357,10 +363,11 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
     from .dpi import get_scale_for_window, init_dpi_awareness
     from .window.finder import find_wechat_window
     from .window.foreground import (
+        bring_to_front,
         clear_topmost,
         move_console_aside,
+        refresh_window,
         restore_console,
-        set_topmost,
     )
 
     cfg = AppConfig.from_env()
@@ -419,9 +426,11 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
           f"，置信度阈值 {cfg.ocr_min_confidence:.2f}")
     print()
 
-    # 小程序窗口置顶：抓屏按它在屏幕上的位置来，窗口被控制台盖住就抓错画面。
-    if not set_topmost(host.hwnd):
-        print("⚠ 小程序窗口置顶失败 —— 请确认它没有被别的窗口挡住")
+    # 小程序窗口置顶 + 激活：抓屏按它在屏幕上的位置来，窗口被控制台盖住
+    # 就抓错画面。激活是必须的 —— GPU 合成的窗口失去焦点会停止渲染，
+    # 只置顶不激活会留在一块白屏上。
+    if not bring_to_front(host.hwnd):
+        print("⚠ 小程序窗口没能激活 —— 请确认它没有被别的窗口挡住")
     console_moved, console_rect = move_console_aside(region)
     if console_moved:
         print("（控制台压着小程序窗口，已挪开 —— 跑完还原）")
@@ -435,10 +444,12 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
             if not _advance_to_ready(
                 ROUTE_PK, region, reader, recorder,
                 ocr=getattr(reader, "_ocr", None),
+                refresh=lambda: refresh_window(host.hwnd),
             ):
                 return 2
         return _run_pk_with_vision(
-            cfg, region, reader, recorder, dry_run, max_questions
+            cfg, region, reader, recorder, dry_run, max_questions,
+            refresh=lambda: refresh_window(host.hwnd),
         )
     finally:
         clear_topmost(host.hwnd)
@@ -446,7 +457,8 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
         vision.close()
 
 
-def _run_pk_with_vision(cfg, region, vision, recorder, dry_run, max_questions) -> int:
+def _run_pk_with_vision(cfg, region, vision, recorder, dry_run, max_questions,
+                        refresh=None) -> int:
     """真正跑 PK 的逻辑。单独拆出来是为了让 vision.close() 能用 finally 兜住。"""
     start = usage_snapshot(vision)
     try:
@@ -505,6 +517,7 @@ def _run_pk_with_vision(cfg, region, vision, recorder, dry_run, max_questions) -
             ocr_fallback_seconds=getattr(cfg, "pk_ocr_fallback_seconds", None),
             # 复用同一个 OCR 引擎读题号 —— 已经在上面预热过了。
             ocr=getattr(vision, "_ocr", None),
+            refresh=refresh,
         )
 
         if report.questions:

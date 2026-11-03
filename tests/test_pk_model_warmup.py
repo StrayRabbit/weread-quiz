@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from PIL import Image
 
 from weread_quiz import advance, cli, pk
 from weread_quiz.errors import RecognitionTimeout
@@ -17,6 +18,13 @@ class Recorder:
 
     def log(self, message):
         self.lines.append(message)
+
+
+def _frame():
+    """一张不是空白帧的画面（空白帧会被当成「窗口还没画出来」跳过）。"""
+    image = Image.new("RGB", (430, 788), "white")
+    image.paste((0, 0, 0), (10, 10, 60, 40))
+    return image
 
 
 @pytest.mark.parametrize("mode", ["ok", "invalid", "timeout"])
@@ -46,7 +54,7 @@ def test_real_warmup_is_one_bounded_request_and_failure_is_nonfatal(mode):
 @pytest.mark.parametrize("already_question", [False, True])
 def test_warmup_before_match_rechecks_button_and_skips_active_question(monkeypatch, already_question):
     events = []
-    monkeypatch.setattr(advance, "grab_screen", lambda region: object())
+    monkeypatch.setattr(advance, "grab_screen", lambda region: _frame())
     monkeypatch.setattr(cli, "_make_pk_question_judge", lambda **kw: lambda image: already_question)
     monkeypatch.setattr(advance, "_read_all_lines", lambda *a: [
         ("自动匹配", 1.0, ((10, 10), (60, 10), (60, 30), (10, 30))),
@@ -54,7 +62,7 @@ def test_warmup_before_match_rechecks_button_and_skips_active_question(monkeypat
     monkeypatch.setattr(cli, "_warmup_pk_model", lambda *a: events.append("warmup"))
     monkeypatch.setattr(advance, "_recheck", lambda *a: events.append("recheck") or "ok")
     monkeypatch.setattr(advance, "click_box", lambda *a: events.append("click"))
-    assert cli._advance_to_ready(ROUTE_PK, None, 1.0, object(), Recorder())
+    assert cli._advance_to_ready(ROUTE_PK, None, object(), Recorder())
     assert events == ([] if already_question else ["warmup", "recheck", "click"])
 
 
@@ -70,7 +78,7 @@ def test_match_warmup_runs_once_even_when_button_recheck_fails(monkeypatch):
 
     monkeypatch.setattr(cli, "advance_to_question", fake_advance)
     monkeypatch.setattr(cli, "_warmup_pk_model", lambda *a: calls.append(1))
-    assert cli._advance_to_ready(ROUTE_PK, None, 1.0, object(), Recorder())
+    assert cli._advance_to_ready(ROUTE_PK, None, object(), Recorder())
     assert calls == [1]
 
 
@@ -80,7 +88,7 @@ def test_daily_does_not_install_model_warmup(monkeypatch):
         return True
 
     monkeypatch.setattr(cli, "advance_to_question", fake_advance)
-    assert cli._advance_to_ready(get_route("daily-days"), None, 1.0, object(), Recorder())
+    assert cli._advance_to_ready(get_route("daily-days"), None, object(), Recorder())
 
 
 def test_preread_accepts_answer_after_four_seconds_within_question_budget(monkeypatch):

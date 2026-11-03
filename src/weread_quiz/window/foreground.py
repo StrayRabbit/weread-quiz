@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from ctypes import wintypes
 
 from ..models import Rect
@@ -28,6 +29,15 @@ SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 GWL_EXSTYLE = -20
 WS_EX_TOPMOST = 0x00000008
+
+# RedrawWindow 的标志
+RDW_INVALIDATE = 0x0001
+RDW_ALLCHILDREN = 0x0080
+RDW_UPDATENOW = 0x0100
+RDW_FRAME = 0x0400
+
+# 抬起来之后给应用重绘的时间（秒）。
+_SETTLE_SECONDS = 0.25
 
 # 虚拟屏幕的 GetSystemMetrics 索引
 _SM_XVIRTUALSCREEN = 76
@@ -67,6 +77,60 @@ def clear_topmost(hwnd: int) -> bool:
         ctypes.c_void_p(hwnd), ctypes.c_void_p(HWND_NOTOPMOST), 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
     ))
+
+
+def _dwm_flush() -> None:
+    """等 DWM 把当前帧合成完 —— 紧接着抓屏才不会抓到还没画出来的空白。"""
+    try:
+        ctypes.windll.dwmapi.DwmFlush()
+    except (AttributeError, OSError):
+        pass
+
+
+def redraw(hwnd: int) -> None:
+    """强制窗口重绘，并等合成器把这一帧刷出来。"""
+    if not hwnd:
+        return
+    ctypes.windll.user32.RedrawWindow(
+        ctypes.c_void_p(hwnd), None, None,
+        RDW_INVALIDATE | RDW_UPDATENOW | RDW_FRAME | RDW_ALLCHILDREN,
+    )
+    _dwm_flush()
+
+
+def bring_to_front(hwnd: int) -> bool:
+    """把小程序窗口抬到前面、激活，并置顶。
+
+    **激活是关键**：小程序是 GPU 合成窗口，焦点丢了就停止渲染 —— 只用
+    HWND_TOPMOST 抬层而不激活，窗口会留在白屏上（内容根本没画出来）。
+    激活才让它把界面重绘。
+
+    置顶是第二道保险：用户点控制台看输出时，小程序不会被压回去。
+
+    返回是否成功激活（激活失败也仍然置顶，照样能盖住控制台）。
+    """
+    user32 = ctypes.windll.user32
+    if not hwnd:
+        return False
+    if user32.IsIconic(hwnd):
+        # 最小化的窗口在屏幕上没有画面 —— 抓屏只会抓到它底下的东西。
+        user32.ShowWindow(hwnd, SW_RESTORE)
+    activated = bool(user32.SetForegroundWindow(ctypes.c_void_p(hwnd)))
+    user32.BringWindowToTop(ctypes.c_void_p(hwnd))
+    set_topmost(hwnd)
+    redraw(hwnd)
+    # 给应用一点时间把内容画出来。
+    time.sleep(_SETTLE_SECONDS)
+    return activated
+
+
+def refresh_window(hwnd: int) -> None:
+    """白屏时的急救：重新激活 + 强制重绘。"""
+    if not hwnd:
+        return
+    ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(hwnd))
+    redraw(hwnd)
+    time.sleep(0.15)
 
 
 def console_hwnd() -> int:
