@@ -17,3 +17,4 @@ __pycache__/
 
 # 历史设计/实施计划与验证报告：描述的是已经删除的架构，不随仓库分发。
 docs/superpowers/
+/docs
