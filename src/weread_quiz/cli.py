@@ -210,6 +210,12 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
     from .dpi import get_scale_for_window, init_dpi_awareness
     from .usage import emit_usage, safe_log, usage_since, usage_snapshot
     from .window.finder import find_wechat_window
+    from .window.foreground import (
+        clear_topmost,
+        move_console_aside,
+        restore_console,
+        set_topmost,
+    )
 
     init_dpi_awareness()
     cfg = AppConfig.from_env()
@@ -244,6 +250,12 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
         cfg, timing_sink=lambda message: safe_log(recorder, message)
     )
     start = usage_snapshot(vision)
+    # 小程序窗口置顶：抓屏按它在屏幕上的位置来，窗口被控制台盖住就抓错画面。
+    if not set_topmost(host.hwnd):
+        print("⚠ 小程序窗口置顶失败 —— 请确认它没有被别的窗口挡住")
+    console_moved, console_rect = move_console_aside(region)
+    if console_moved:
+        print("（控制台压着小程序窗口，已挪开 —— 跑完还原）")
     try:
         warm_cost = _warmup_client(vision)
         safe_log(recorder, f"连接预热：{warm_cost * 1000:.0f}ms（建 SSL context 与长连接）")
@@ -298,6 +310,8 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
                 return 2
         report = run_daily(daily_cfg)
     finally:
+        clear_topmost(host.hwnd)
+        restore_console(console_rect)
         vision.close()
         emit_usage("本局", usage_since(vision, start), recorder)
     print()
@@ -342,6 +356,12 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
     """自动答一局「问答 PK」。"""
     from .dpi import get_scale_for_window, init_dpi_awareness
     from .window.finder import find_wechat_window
+    from .window.foreground import (
+        clear_topmost,
+        move_console_aside,
+        restore_console,
+        set_topmost,
+    )
 
     cfg = AppConfig.from_env()
     cfg.validate_model()
@@ -399,6 +419,12 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
           f"，置信度阈值 {cfg.ocr_min_confidence:.2f}")
     print()
 
+    # 小程序窗口置顶：抓屏按它在屏幕上的位置来，窗口被控制台盖住就抓错画面。
+    if not set_topmost(host.hwnd):
+        print("⚠ 小程序窗口置顶失败 —— 请确认它没有被别的窗口挡住")
+    console_moved, console_rect = move_console_aside(region)
+    if console_moved:
+        print("（控制台压着小程序窗口，已挪开 —— 跑完还原）")
     try:
         if not dry_run:
             # 正式模式才推进 —— dry-run 的意义是"看看当前这题能不能识别
@@ -415,6 +441,8 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
             cfg, region, reader, recorder, dry_run, max_questions
         )
     finally:
+        clear_topmost(host.hwnd)
+        restore_console(console_rect)
         vision.close()
 
 
