@@ -95,4 +95,3 @@ weread-quiz clean           # 清理旧截图（保留最近 30 天）
 MIT，见 [LICENSE](LICENSE)。
 
 本项目仅供学习研究使用，如有侵权，请联系删除！第三方模型和微信相关素材的权利不因本项目 LICENSE 而改变。
-"# weread-quiz" 

@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+*.log
+build/
+dist/
+*.egg-info/
+venv/
+data/
+out/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.idea/
+.claude/
+
+# 历史设计/实施计划与验证报告：描述的是已经删除的架构，不随仓库分发。
+docs/superpowers/

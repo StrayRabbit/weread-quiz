@@ -1,0 +1,11 @@
+# 文本文件统一按 LF 存储与检出，跨平台 clone 后 diff 干净。
+* text=auto eol=lf
+
+# Windows 批处理必须保持 CRLF —— LF 会让 cmd.exe 把整行当成一条命令，
+# 启动器直接失效。
+*.bat text eol=crlf
+
+# 二进制资源不做行尾转换。
+*.png binary
+*.jpg binary
+*.ico binary

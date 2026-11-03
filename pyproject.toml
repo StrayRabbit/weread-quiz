@@ -1,0 +1,45 @@
+[project]
+name = "weread-quiz"
+version = "0.1.0"
+description = "微信读书每日一答与问答 PK 辅助工具"
+requires-python = ">=3.10"
+dependencies = [
+    "mss>=9.0.1",
+    "pillow>=10.0.0",
+    "numpy>=1.26",
+    "opencv-python>=4.9",
+    # 两条答题链路共用本地 OCR，门控判否时回退图片路径。
+    "rapidocr==3.9.0",
+    "onnxruntime>=1.17",
+    "pyautogui>=0.9.54",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+weread-quiz = "weread_quiz.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/weread_quiz"]
+
+# PK 卡片结构模板（screen.looks_like_question_template 用）。
+# 装成 wheel 后必须随包分发，否则预筛在安装环境里静默失效。
+[tool.hatch.build.targets.wheel.force-include]
+"src/weread_quiz/assets/pk_question_card.png" = "weread_quiz/assets/pk_question_card.png"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# "src" 让 weread_quiz 可导入；"." 让 tools 作为命名空间包可导入，
+# tests/test_capture_watch.py 要从 tools.capture_watch 取被测函数。
+pythonpath = ["src", "."]
+markers = [
+    # 仅放行标记用例访问 loopback，仍禁止外网。
+    "allow_network: 允许该用例访问出站网络（默认被 tests/conftest.py 拦截）",
+]
