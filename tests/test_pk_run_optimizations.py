@@ -52,7 +52,7 @@ def test_timeout_guess_number_ocr_is_its_own_timing_stage(monkeypatch):
             events.append(name)
 
     result = pk._guess_after_timeout(
-        (0, 0, 430, 788), 1.0, image, None,
+        (0, 0, 430, 788), image, None,
         lambda reason, error="": {"skipped": True}, True, Watch(), "recognition_timeout",
     )
     assert result["guessed"]

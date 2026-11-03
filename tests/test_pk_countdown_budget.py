@@ -71,7 +71,7 @@ def test_preread_budget_accounts_for_capture_age(scene, seconds, captured, expec
     def answer(item, **kw):
         seen.append(kw["deadline"])
         return VisionQuestion(stem=item.stem, options=item.options, answer_index=1, screen="question", local_read=True)
-    result = pk.answer_one_question(None, 1.0, SimpleNamespace(answer_from_ocr_read=answer),
+    result = pk.answer_one_question(None, SimpleNamespace(answer_from_ocr_read=answer),
         image=image, captured_at=captured, ocr_read=read(seconds), verbose=False)
     assert seen == [expected_deadline]
     assert result["guessed"] is False
@@ -81,7 +81,7 @@ def test_countdown_with_no_remaining_budget_does_not_call_model(scene):
     state, image = scene
     def answer(*a, **kw):
         pytest.fail("没有时间时不能调用模型")
-    result = pk.answer_one_question(None, 1.0, SimpleNamespace(answer_from_ocr_read=answer),
+    result = pk.answer_one_question(None, SimpleNamespace(answer_from_ocr_read=answer),
         image=image, captured_at=999.0, ocr_read=read(2), verbose=False, guess_on_failure=False)
     assert result["skipped"] is True
     assert state["clicks"] == 0
@@ -102,7 +102,7 @@ def test_hybrid_budget_extends_real_model_call_and_accepts_seven_second_answer(s
             state["now"] += 7.0
             return 1
     hybrid = HybridQuestionReader(Model(), Ocr(), verbose=False)
-    result = pk.answer_one_question(None, 1.0, hybrid, image=image, captured_at=999.0, verbose=False)
+    result = pk.answer_one_question(None, hybrid, image=image, captured_at=999.0, verbose=False)
     assert seen == [1009.5]
     assert result["guessed"] is False
     assert state["clicks"] == 1
@@ -113,7 +113,7 @@ def test_timer_deadline_still_applies_to_local_model_answer(scene):
     def answer(item, **kw):
         state["now"] = 1011.0
         return VisionQuestion(stem=item.stem, options=item.options, answer_index=1, screen="question", local_read=True)
-    result = pk.answer_one_question(None, 1.0, SimpleNamespace(answer_from_ocr_read=answer),
+    result = pk.answer_one_question(None, SimpleNamespace(answer_from_ocr_read=answer),
         image=image, captured_at=1000.0, ocr_read=read(12), verbose=False, guess_on_failure=False)
     assert result["skipped"] is True
     assert state["clicks"] == 0
@@ -126,7 +126,7 @@ def test_timeout_reuses_progress_only_when_fresh_frame_is_same(scene, same, expe
     context = pk.PKCaptureContext(captured_at=1000.0, progress_text="第1题·共10题")
     def answer(*a, **kw):
         raise RecognitionTimeout("deadline_exceeded")
-    result = pk.answer_one_question(None, 1.0, SimpleNamespace(answer_from_ocr_read=answer),
+    result = pk.answer_one_question(None, SimpleNamespace(answer_from_ocr_read=answer),
         image=image, captured_at=1000.0, ocr_read=read(), capture_context=context, verbose=False)
     assert result["guessed"] is True
     assert result["ui_number"] == expected_number
@@ -137,7 +137,7 @@ def test_timeout_without_progress_still_reads_clicked_frame(scene):
     state, image = scene
     def model(*a, **kw):
         raise RecognitionTimeout("deadline_exceeded")
-    result = pk.answer_one_question(None, 1.0, SimpleNamespace(read_question=model),
+    result = pk.answer_one_question(None, SimpleNamespace(read_question=model),
         image=image, captured_at=1000.0, verbose=False)
     assert result["ui_number"] == 2
     assert state["number_reads"] == 1

@@ -785,7 +785,7 @@ def wait_for_question(region, vision, timeout: float = 120.0, verbose: bool = Tr
     return None, None
 
 
-def _guess_after_timeout(region, scale, image, question, skip, guess_on_failure,
+def _guess_after_timeout(region, image, question, skip, guess_on_failure,
                          watch, error: str, *, ocr=None, progress_text="",
                          feedback: AnswerFeedback | None = None) -> dict:
     """识别失败后重抓并定位按钮，按当前题号和画面证据限制蒙答，未知页面不点击。"""
@@ -809,7 +809,7 @@ def _guess_after_timeout(region, scale, image, question, skip, guess_on_failure,
             reuse_progress = image is not None and is_same_question(image, fresh)
         except Exception:  # noqa: BLE001 - 不能确认同题就读取新图
             pass
-    click_box(box, region, scale, pause=0.15)
+    click_box(box, region, pause=0.15)
     if feedback is not None:
         feedback.last_question = _is_last_question(progress_text)
         feedback.start(fresh, box)
@@ -936,7 +936,6 @@ def _read_by_image(vision, image, deadline, capture_context, *, budget=None):
 
 def answer_one_question(
     region,
-    scale: float,
     vision: VisionService,
     image=None,
     question=None,
@@ -1011,7 +1010,7 @@ def answer_one_question(
 
     def guess(error):
         return _guess_after_timeout(
-            region, scale, image, question, skip, guess_on_failure, watch,
+            region, image, question, skip, guess_on_failure, watch,
             error, ocr=ocr, progress_text=current_progress_text(), feedback=feedback,
         )
 
@@ -1182,7 +1181,7 @@ def answer_one_question(
             error = error or "识别超时，已蒙第一个按钮"
             watch.mark("超时蒙题")
         # 不在校验异常捕获范围内；点击失败和紧急停止必须交给调用方。
-        click_box(box, region, scale, pause=0.15)
+        click_box(box, region, pause=0.15)
         if feedback is not None:
             feedback.last_question = _is_last_question(current_progress_text())
             feedback.start(fresh, box)
@@ -1309,7 +1308,6 @@ def _is_next_question_ready(candidate, current_image) -> bool:
 
 def run_pk(
     region,
-    scale: float,
     vision: VisionService,
     max_questions: int = _MAX_QUESTIONS,
     guess_on_failure: bool = True,
@@ -1356,7 +1354,6 @@ def run_pk(
             # 复用等待阶段确认好的识题图，每题仅保存一张；换题轮询图不落盘。
             result = answer_one_question(
                 region,
-                scale,
                 vision,
                 image=current,
                 question=question,

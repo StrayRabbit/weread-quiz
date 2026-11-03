@@ -52,7 +52,7 @@ class _Recorder:
 
 
 def _config(reader, recorder, **kwargs):
-    return daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, reader, verbose=True,
+    return daily.DailyConfig(Rect(0, 0, 430, 788), reader, verbose=True,
                              recorder=recorder, **kwargs)
 
 

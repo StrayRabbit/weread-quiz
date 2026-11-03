@@ -105,7 +105,6 @@ class _WaitOutcome:
 @dataclass
 class DailyConfig:
     region: object  # Rect
-    scale: float
     vision: VisionService
     recorder: object | None = None
     verbose: bool = True
@@ -380,7 +379,7 @@ def _answer_one_question_inner(
                 "error": f"validation_failed: {exc}",
                 "skipped": True,
             }
-        click_box(box, cfg.region, cfg.scale, pause=0.15)
+        click_box(box, cfg.region, pause=0.15)
         if feedback is not None:
             # 非末题：等待阶段每 0.25 秒就有一次取帧，不额外抓屏。
             feedback.start(fresh, box)

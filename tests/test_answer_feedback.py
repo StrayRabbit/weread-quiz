@@ -143,7 +143,7 @@ def test_daily_wait_reuses_existing_frame(monkeypatch):
     monkeypatch.setattr(daily_buttons, "_detect_any_buttons", lambda im: True)
     monkeypatch.setattr(daily, "_looks_like_revive_page", lambda im: False)
     monkeypatch.setattr(daily, "has_answer_reveal", lambda im: True)
-    cfg = daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, SimpleNamespace(), verbose=False)
+    cfg = daily.DailyConfig(Rect(0, 0, 430, 788),SimpleNamespace(), verbose=False)
     outcome = daily.wait_for_next_question(cfg, frame(mode="daily"), feedback=feedback)
     assert feedback.status == "wrong"
     assert outcome.status == "interrupted"  # 颜色不改变原来的终态判定
@@ -159,7 +159,7 @@ def test_timeout_guess_uses_actual_fresh_frame_and_button(monkeypatch):
     monkeypatch.setattr(pk, "find_option_buttons", lambda im: [BOX])
     monkeypatch.setattr(pk, "click_box", lambda *a, **k: None)
     monkeypatch.setattr(pk, "read_question_number", lambda *a, **k: (2, 10, "第2题·共10题"))
-    result = pk._guess_after_timeout(None, 1.0, frame(), None, None, True, None,
+    result = pk._guess_after_timeout(None, frame(), None, None, True, None,
                                      "timeout", feedback=feedback)
     feedback.observe(frame(RED, changed=True))
     feedback.finish(result, verbose=False)
@@ -192,7 +192,7 @@ def test_daily_last_question_samples_the_settle_window(monkeypatch):
     monkeypatch.setattr(daily.time, "sleep", sleep)
     monkeypatch.setattr(daily, "grab_screen", grab)
     monkeypatch.setattr(daily, "read_daily_result", lambda *a: "无")
-    cfg = daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, SimpleNamespace(), verbose=False)
+    cfg = daily.DailyConfig(Rect(0, 0, 430, 788),SimpleNamespace(), verbose=False)
     assert daily._read_final(cfg, feedback=feedback) == "final_pending"
     assert feedback.status == "correct"
     assert len(grabs) == len(daily._FINAL_SAMPLE_OFFSETS) + 1
@@ -210,7 +210,7 @@ def test_daily_click_starts_feedback_from_revalidated_button(monkeypatch):
     monkeypatch.setattr(daily, "grab_screen", lambda _: frame(mode="daily"))
     clicks = []
     monkeypatch.setattr(daily, "click_box", lambda box, *a, **k: clicks.append(box))
-    cfg = daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, SimpleNamespace(), verbose=False)
+    cfg = daily.DailyConfig(Rect(0, 0, 430, 788),SimpleNamespace(), verbose=False)
     question = VisionQuestion("题目", ["甲"], answer_index=0)
     result = daily._answer_one_question_inner(cfg, frame(mode="daily"), question,
                                               feedback=feedback)
@@ -235,7 +235,7 @@ def test_daily_last_question_captures_right_after_click(monkeypatch):
     monkeypatch.setattr(daily, "grab_screen",
                         lambda _: grabs.append(True) or frames[min(len(grabs) - 1, 1)])
     monkeypatch.setattr(daily, "click_box", lambda *a, **k: None)
-    cfg = daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, SimpleNamespace(), verbose=False)
+    cfg = daily.DailyConfig(Rect(0, 0, 430, 788),SimpleNamespace(), verbose=False)
     question = VisionQuestion("题目", ["甲"], answer_index=0)
     daily._answer_one_question_inner(cfg, frame(mode="daily"), question,
                                       feedback=feedback)
@@ -256,7 +256,7 @@ def test_daily_normal_click_does_not_capture_extra(monkeypatch):
     monkeypatch.setattr(daily, "find_option_buttons", lambda im: [BOX])
     monkeypatch.setattr(daily, "grab_screen", lambda _: grabs.append(True) or frame(mode="daily"))
     monkeypatch.setattr(daily, "click_box", lambda *a, **k: None)
-    cfg = daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, SimpleNamespace(), verbose=False)
+    cfg = daily.DailyConfig(Rect(0, 0, 430, 788),SimpleNamespace(), verbose=False)
     question = VisionQuestion("题目", ["甲"], answer_index=0)
     daily._answer_one_question_inner(cfg, frame(mode="daily"), question,
                                       feedback=feedback)
@@ -317,7 +317,7 @@ def test_run_daily_marks_the_last_question_for_early_capture(monkeypatch):
                         lambda cfg, current, watch=None, feedback=None:
                         daily._WaitOutcome("next", frame(mode="daily")))
     monkeypatch.setattr(daily, "_read_final", lambda cfg, feedback=None: "success")
-    cfg = daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, SimpleNamespace(),
+    cfg = daily.DailyConfig(Rect(0, 0, 430, 788),SimpleNamespace(),
                              verbose=False, max_questions=3)
     report = daily.run_daily(cfg)
     assert report.outcome == "success"
@@ -505,7 +505,7 @@ def test_pk_normal_question_click_does_not_capture_extra(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", lambda _: grabs.append(True) or frame())
     monkeypatch.setattr(pk, "click_box", lambda *a, **k: None)
     question = VisionQuestion("题目", ["甲"], answer_index=0)
-    pk.answer_one_question(None, 1.0, SimpleNamespace(usage=None), image=frame(),
+    pk.answer_one_question(None, SimpleNamespace(usage=None), image=frame(),
                             question=question, captured_at=pk.time.monotonic(),
                             verbose=False, feedback=feedback)
     assert len(grabs) == 1, "非末题只应有点击前复核那一次抓屏"
@@ -530,7 +530,7 @@ def test_pk_last_question_click_captures_right_after_click(monkeypatch):
                         button_count=1, has_progress=True,
                         progress_text="最后一题·分数翻倍")
     question = VisionQuestion("题目", ["甲"], answer_index=0)
-    pk.answer_one_question(None, 1.0, SimpleNamespace(usage=None), image=frame(),
+    pk.answer_one_question(None, SimpleNamespace(usage=None), image=frame(),
                             question=question, ocr_read=ocr_read,
                             captured_at=pk.time.monotonic(), verbose=False,
                             feedback=feedback)
@@ -563,7 +563,7 @@ def test_pk_normal_click_starts_feedback(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", lambda _: frame())
     monkeypatch.setattr(pk, "click_box", lambda *a, **k: None)
     question = VisionQuestion("题目", ["甲"], answer_index=0)
-    result = pk.answer_one_question(None, 1.0, SimpleNamespace(usage=None), image=frame(),
+    result = pk.answer_one_question(None, SimpleNamespace(usage=None), image=frame(),
                                     question=question, captured_at=pk.time.monotonic(),
                                     verbose=False, feedback=feedback)
     feedback.observe(frame(BLUE))
@@ -601,7 +601,7 @@ def test_pk_last_question_detected_when_progress_read_during_model_call(monkeypa
     monkeypatch.setattr(pk, "read_question_number",
                         lambda *a, **k: (None, None, "最后一题·分数翻倍"))
     context = pk.PKCaptureContext()
-    pk.answer_one_question(None, 1.0, Vision(), image=frame(), question=None,
+    pk.answer_one_question(None, Vision(), image=frame(), question=None,
                             captured_at=pk.time.monotonic(), verbose=False,
                             feedback=feedback, capture_context=context)
     assert feedback.last_question is True, "模型调用期间读到的题号行必须参与末题判定"
@@ -698,7 +698,7 @@ def test_last_question_reveal_is_captured_end_to_end(monkeypatch):
 
     feedback = AnswerFeedback("pk")
     context = pk.PKCaptureContext()
-    result = pk.answer_one_question(None, 1.0, Vision(), image=frame(), question=None,
+    result = pk.answer_one_question(None, Vision(), image=frame(), question=None,
                                     captured_at=clock.now, verbose=False,
                                     feedback=feedback, capture_context=context)
     pk.wait_for_next_question(None, frame(), delay=1.0, feedback=feedback)

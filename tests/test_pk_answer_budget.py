@@ -82,7 +82,7 @@ def patched(monkeypatch):
             raise pk.WqError("下标越界")
         return boxes[index]
 
-    def fake_click(box, region, scale, pause=0.0):
+    def fake_click(box, region, pause=0.0):
         state["clicks"].append(box.center_y)
 
     monkeypatch.setattr(pk, "grab_screen", fake_grab)
@@ -126,7 +126,6 @@ def test_deadline_anchors_to_confirmed_at_not_stale_capture(monkeypatch):
     vision = FakeVision(1)
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=vision,
         image=_blank(),
         question=None,
@@ -155,7 +154,6 @@ def test_deadline_uses_capture_when_no_confirmation(monkeypatch):
     vision = FakeVision(1)
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=vision,
         image=_blank(),
         question=None,
@@ -203,7 +201,6 @@ def test_local_preread_is_exempt_from_deadline(monkeypatch):
 
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=vision,
         image=_blank(),
         question=None,
@@ -245,7 +242,6 @@ def test_preread_path_still_consults_model_when_deadline_passed(monkeypatch):
 
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=Vision(None),
         image=_blank(),
         question=None,

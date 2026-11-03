@@ -176,7 +176,7 @@ def desktop(monkeypatch):
 
 
 def config(vision, **kwargs):
-    return daily.DailyConfig(Rect(0, 0, 430, 788), 1.0, vision, verbose=False, **kwargs)
+    return daily.DailyConfig(Rect(0, 0, 430, 788), vision, verbose=False, **kwargs)
 
 
 def test_wait_confirms_locally_without_model_calls(desktop):

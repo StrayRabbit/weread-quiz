@@ -137,7 +137,6 @@ def test_real_run_scenario_q1_is_not_guessed(monkeypatch):
     clock.now = base
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=vision,
         image=_blank(),
         question=None,

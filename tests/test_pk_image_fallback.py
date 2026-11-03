@@ -98,7 +98,7 @@ def test_slow_text_path_falls_back_to_image_path(scene):
     vision = Vision(clock)
 
     result = pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, vision, image=_blank(), captured_at=clock.now,
+        (0, 0, 430, 788),vision, image=_blank(), captured_at=clock.now,
         ocr_read=_read(), verbose=False,
     )
 
@@ -114,7 +114,7 @@ def test_text_path_is_not_retried_before_the_image_path(scene):
     vision = Vision(clock)
 
     pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, vision, image=_blank(), captured_at=clock.now,
+        (0, 0, 430, 788),vision, image=_blank(), captured_at=clock.now,
         ocr_read=_read(), verbose=False,
     )
 
@@ -131,7 +131,7 @@ def test_no_image_path_when_budget_is_almost_gone(scene):
     clock.now = 1008.0
 
     result = pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, vision, image=_blank(), captured_at=1000.0,
+        (0, 0, 430, 788),vision, image=_blank(), captured_at=1000.0,
         ocr_read=_read(), verbose=False,
     )
 
@@ -146,7 +146,7 @@ def test_text_path_timeout_is_capped(scene):
     vision = Vision(clock)
 
     pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, vision, image=_blank(), captured_at=clock.now,
+        (0, 0, 430, 788),vision, image=_blank(), captured_at=clock.now,
         ocr_read=_read(), verbose=False,
     )
 

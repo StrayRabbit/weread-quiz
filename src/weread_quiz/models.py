@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Rect:
-    """矩形。坐标是物理像素，除非明确经过 dpi.box_center_to_screen 换算。"""
+    """矩形。坐标是**标定坐标**（截图已归一化到 dpi.BASELINE_WIDTH），
+    要变成屏幕物理坐标得走 dpi.box_center_to_screen。"""
 
     left: int
     top: int

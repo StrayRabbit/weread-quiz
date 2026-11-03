@@ -116,7 +116,7 @@ def _recheck(region, ocr, hit: TextHit) -> str:
     return _RECHECK_OK
 
 
-def advance_to_question(region, scale, ocr, recorder, targets,
+def advance_to_question(region, ocr, recorder, targets,
                          is_question_page, timeout: float = 90.0,
                          poll_interval: float = 0.3, *, before_click=None) -> bool:
     """把界面推进到答题页；可在点击前准备，准备完成后仍须重新复核按钮。"""
@@ -162,7 +162,7 @@ def advance_to_question(region, scale, ocr, recorder, targets,
 
         rect = box_to_rect(hit.box)
         _log(recorder, f"推进：点击「{hit.text}」(置信度 {hit.confidence:.3f})")
-        click_box(rect, region, scale)
+        click_box(rect, region)
         if hit.text == last_target:
             # 白名单的最后一个目标 —— 点完就是进入答题。
             return True

@@ -150,7 +150,7 @@ def _make_pk_question_judge(ocr=None):
     return is_question_page
 
 
-def _advance_to_ready(route, region, scale, reader, recorder, ocr=None) -> bool:
+def _advance_to_ready(route, region, reader, recorder, ocr=None) -> bool:
     """把界面推进到答题页。返回 False 表示推进失败（已截图落盘）。"""
     from .daily_screen import is_question_screen
 
@@ -171,7 +171,6 @@ def _advance_to_ready(route, region, scale, reader, recorder, ocr=None) -> bool:
 
     ok = advance_to_question(
         region=region,
-        scale=scale,
         ocr=ocr,
         recorder=recorder,
         targets=route.advance_targets,
@@ -222,7 +221,8 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
     host = find_wechat_window()
     region = host.to_rect()
     scale = get_scale_for_window(host.hwnd)
-    print(f"✓ 微信窗口：{host.title!r} {host.width}×{host.height} @({host.left},{host.top})")
+    print(f"✓ 微信窗口：{host.title!r} {host.width}×{host.height} @({host.left},{host.top})"
+          f"（系统缩放 {scale * 100:.0f}%）")
 
     recorder = RunRecorder(mode="daily")
     safe_log(recorder, f"daily 启动，dry_run={dry_run} 窗口 {region.as_dict()}")
@@ -281,7 +281,6 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
 
         daily_cfg = DailyConfig(
             region=region,
-            scale=scale,
             vision=reader,
             recorder=recorder,
             verbose=True,
@@ -293,7 +292,7 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
             # 推进失败时直接 return 2：下面那个 finally 会关掉 vision。
             route = get_route(route_name)
             if not _advance_to_ready(
-                route, region, scale, reader, recorder,
+                route, region, reader, recorder,
                 ocr=getattr(reader, "_ocr", None),
             ):
                 return 2
@@ -360,7 +359,8 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
     host = find_wechat_window()
     region = host.to_rect()
     scale = get_scale_for_window(host.hwnd)
-    print(f"✓ 微信窗口：{host.title!r} {host.width}×{host.height} @({host.left},{host.top})")
+    print(f"✓ 微信窗口：{host.title!r} {host.width}×{host.height} @({host.left},{host.top})"
+          f"（系统缩放 {scale * 100:.0f}%）")
 
     recorder = RunRecorder(mode="pk", echo=trace)
     safe_log(recorder, f"启动，窗口 {region.as_dict()}")
@@ -407,18 +407,18 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
             # OCR 引擎来自 reader._ocr（混合读取器持有的 OCR 实例），
             # **不是** vision._ocr —— VisionService 上没有 _ocr 属性。
             if not _advance_to_ready(
-                ROUTE_PK, region, scale, reader, recorder,
+                ROUTE_PK, region, reader, recorder,
                 ocr=getattr(reader, "_ocr", None),
             ):
                 return 2
         return _run_pk_with_vision(
-            cfg, region, scale, reader, recorder, dry_run, max_questions
+            cfg, region, reader, recorder, dry_run, max_questions
         )
     finally:
         vision.close()
 
 
-def _run_pk_with_vision(cfg, region, scale, vision, recorder, dry_run, max_questions) -> int:
+def _run_pk_with_vision(cfg, region, vision, recorder, dry_run, max_questions) -> int:
     """真正跑 PK 的逻辑。单独拆出来是为了让 vision.close() 能用 finally 兜住。"""
     start = usage_snapshot(vision)
     try:
@@ -469,7 +469,6 @@ def _run_pk_with_vision(cfg, region, scale, vision, recorder, dry_run, max_quest
         print()
         report = run_pk(
             region,
-            scale,
             vision,
             max_questions=max_questions,
             guess_on_failure=cfg.guess_on_failure,

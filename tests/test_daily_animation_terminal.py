@@ -23,7 +23,7 @@ def question_frame(option_width=8):
 
 
 def configuration(**kwargs):
-    return daily.DailyConfig(Rect(0, 0, 430, 788), 1.0,
+    return daily.DailyConfig(Rect(0, 0, 430, 788),
                              kwargs.pop("vision", SimpleNamespace()),
                              verbose=False, **kwargs)
 

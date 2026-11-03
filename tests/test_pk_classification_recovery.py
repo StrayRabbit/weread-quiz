@@ -60,7 +60,7 @@ def test_local_progress_recovers_from_model_misclassification(scene, screen):
     vision = Vision(screen)
     recorder = Recorder()
     result = pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, vision, image=image,
+        (0, 0, 430, 788),vision, image=image,
         capture_context=context, recorder=recorder, verbose=False,
     )
     assert result["guessed"] is True
@@ -76,7 +76,7 @@ def test_misclassification_recovery_still_checks_same_question(scene, monkeypatc
     image, clicks = scene
     monkeypatch.setattr(pk, "is_same_question", lambda a, b: False)
     result = pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, Vision(), image=image,
+        (0, 0, 430, 788),Vision(), image=image,
         capture_context=pk.PKCaptureContext(captured_at=100.0), verbose=False,
     )
     assert result["skipped"] is True
@@ -88,7 +88,7 @@ def test_misclassification_does_not_override_disabled_guessing(scene):
     image, clicks = scene
     with pytest.raises(pk.AnswerUnavailable):
         pk.answer_one_question(
-            (0, 0, 430, 788), 1.0, Vision(), image=image,
+            (0, 0, 430, 788),Vision(), image=image,
             capture_context=pk.PKCaptureContext(captured_at=100.0),
             guess_on_failure=False, verbose=False,
         )
@@ -100,7 +100,7 @@ def test_non_question_without_progress_does_not_click(scene):
     recorder = Recorder()
     with pytest.raises(pk.NotAQuestionScreen):
         pk.answer_one_question(
-            (0, 0, 430, 788), 1.0, Vision(progress=""), image=image,
+            (0, 0, 430, 788),Vision(progress=""), image=image,
             capture_context=pk.PKCaptureContext(captured_at=100.0),
             recorder=recorder, verbose=False,
         )
@@ -117,7 +117,7 @@ def test_missing_cached_progress_can_use_local_progress_reader(scene):
             return True, "第6题·共10题"
 
     result = pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, Vision(progress=""), image=image,
+        (0, 0, 430, 788),Vision(progress=""), image=image,
         captured_at=100.0, ocr=Ocr(), verbose=False,
     )
     assert result["guessed"] is True
@@ -150,7 +150,7 @@ def test_run_continues_after_sixth_question_misclassification(scene, monkeypatch
     monkeypatch.setattr(pk, "wait_for_next_question", next_question)
     monkeypatch.setattr(pk, "_read_final", lambda *a, **k: finals.append(True))
     vision.read_question = read_question
-    report = pk.run_pk((0, 0, 430, 788), 1.0, vision, max_questions=2, verbose=False)
+    report = pk.run_pk((0, 0, 430, 788), vision, max_questions=2, verbose=False)
     assert report.answered == 2, "第6题误分类不能提前结束整局"
     assert report.questions[0]["guessed"] is True
     assert report.questions[1]["guessed"] is False

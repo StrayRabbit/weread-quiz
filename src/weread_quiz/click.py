@@ -18,10 +18,10 @@ from .models import Rect
 pyautogui.FAILSAFE = True
 
 
-def click_box(box: Rect, region: Rect, scale: float, pause: float = 0.3) -> None:
-    """点击 region 内 box 的中心。坐标经 DPI 换算。"""
+def click_box(box: Rect, region: Rect, pause: float = 0.3) -> None:
+    """点击截图里的框。坐标由 dpi.box_center_to_screen 从标定坐标换算到屏幕。"""
     # 按了 Esc 就不再点 —— 中止必须赶在这一次点击之前生效。
     abort.check()
-    x, y = box_center_to_screen(region, box, scale)
+    x, y = box_center_to_screen(region, box)
     pyautogui.click(x, y)
     time.sleep(pause)

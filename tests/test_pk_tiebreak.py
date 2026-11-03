@@ -72,8 +72,8 @@ def run(monkeypatch, game, *, max_questions=None, verbose=False):
     monkeypatch.setattr(pk, "_read_final", game.read_final)
     if max_questions is None:
         # 不传上限 —— 走 run_pk 的默认值（启动器也是这条路径）。
-        return pk.run_pk((0, 0, 430, 788), 1.0, object(), verbose=verbose)
-    return pk.run_pk((0, 0, 430, 788), 1.0, object(), max_questions=max_questions,
+        return pk.run_pk((0, 0, 430, 788), object(), verbose=verbose)
+    return pk.run_pk((0, 0, 430, 788), object(), max_questions=max_questions,
                      verbose=verbose)
 
 

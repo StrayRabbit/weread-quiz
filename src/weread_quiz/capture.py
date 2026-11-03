@@ -10,6 +10,7 @@ import mss
 from PIL import Image
 
 from .config import RUNS_DIR
+from .dpi import BASELINE_WIDTH
 from .models import Rect
 
 _UNSAFE = re.compile(r"[^0-9A-Za-z一-鿿_-]")
@@ -61,8 +62,26 @@ class RunRecorder:
                 pass
 
 
+def normalize_to_baseline(image: Image.Image) -> Image.Image:
+    """把窗口截图归一化到标定宽度。
+
+    所有像素判据（按钮带、题号带、题干区、答题卡片）都是按
+    BASELINE_WIDTH 标定的 —— 归一化之后下游一律按标定坐标工作，
+    系统显示缩放 125%/150%/200% 都不用改常量。
+    """
+    if image.width <= 0 or image.width == BASELINE_WIDTH:
+        return image
+    height = max(1, round(image.height * BASELINE_WIDTH / image.width))
+    return image.resize((BASELINE_WIDTH, height), Image.LANCZOS)
+
+
 def grab_screen(region: Rect | None = None) -> Image.Image:
-    """抓屏幕。"""
+    """抓屏幕。
+
+    带 region 时抓的是小程序窗口，并**归一化到标定宽度**
+    （BASELINE_WIDTH）。整屏抓取（region=None）不归一化 —— 那是给人看的
+    留证截图。
+    """
     with mss.MSS() as sct:
         monitor = sct.monitors[1] if region is None else {
             "left": region.left,
@@ -71,4 +90,7 @@ def grab_screen(region: Rect | None = None) -> Image.Image:
             "height": region.height,
         }
         raw = sct.grab(monitor)
-        return Image.frombytes("RGB", raw.size, raw.rgb)
+        image = Image.frombytes("RGB", raw.size, raw.rgb)
+    if region is not None:
+        image = normalize_to_baseline(image)
+    return image

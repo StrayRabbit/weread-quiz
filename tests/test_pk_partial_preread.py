@@ -101,7 +101,6 @@ def test_partial_preread_skips_text_and_reads_image(monkeypatch):
     vision = Vision()
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=vision,
         image=_blank(),
         question=None,
@@ -140,7 +139,6 @@ def test_image_path_failure_does_not_abort_the_run(monkeypatch):
 
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=Vision(),
         image=_blank(),
         question=None,
@@ -181,7 +179,6 @@ def test_both_paths_failing_still_clicks_something(monkeypatch):
 
     result = pk.answer_one_question(
         region=(0, 0, 430, 788),
-        scale=1.0,
         vision=Vision(),
         image=_blank(),
         question=None,
@@ -271,7 +268,7 @@ def test_option_count_mismatch_rejects_candidate_and_names_source(monkeypatch, l
             return VisionQuestion("题目", ["甲", "丙"], answer_index=1, local_read=local_read)
 
     result = pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, Vision(), image=_blank(), captured_at=now, verbose=False,
+        (0, 0, 430, 788),Vision(), image=_blank(), captured_at=now, verbose=False,
     )
     assert result["guessed"] is True, "选项数量不符的候选下标不能继续使用"
     assert result["answer"] == 0
@@ -293,7 +290,7 @@ def test_option_count_mismatch_respects_disabled_guessing(monkeypatch):
 
     with pytest.raises(AnswerUnavailable):
         pk.answer_one_question(
-            (0, 0, 430, 788), 1.0, Vision(), image=_blank(), captured_at=1000.0,
+            (0, 0, 430, 788),Vision(), image=_blank(), captured_at=1000.0,
             guess_on_failure=False, verbose=False,
         )
 
@@ -319,7 +316,7 @@ def test_empty_slot_preread_never_requests_text_answer(monkeypatch):
             return VisionQuestion("题目", ["甲", "乙", "丙"], answer_index=2)
 
     result = pk.answer_one_question(
-        (0, 0, 430, 788), 1.0, Vision(), image=_blank(), captured_at=1000.0,
+        (0, 0, 430, 788),Vision(), image=_blank(), captured_at=1000.0,
         ocr_read=read, verbose=False,
     )
     assert result["answer"] == 2

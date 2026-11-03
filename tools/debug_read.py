@@ -18,6 +18,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from weread_quiz import buttons, daily_buttons, daily_screen, screen  # noqa: E402
+from weread_quiz.capture import normalize_to_baseline  # noqa: E402
 from weread_quiz.config import AppConfig  # noqa: E402
 from weread_quiz.daily_ocr import (  # noqa: E402
     DailyOcrReader,
@@ -381,7 +382,7 @@ def debug_one(path: Path, mode: str, ocr_reader, vision_service, *,
 
     try:
         with Image.open(path) as raw:
-            image = raw.convert("RGB")
+            image = normalize_to_baseline(raw.convert("RGB"))
     except Exception as exc:  # noqa: BLE001
         record["error"] = _exc(exc)
         record["total_ms"] = _ms(time.monotonic() - overall)
@@ -752,7 +753,7 @@ def main(argv: list[str] | None = None) -> int:
     warm_sample = None
     try:
         with Image.open(files[0]) as raw:
-            warm_sample = raw.convert("RGB")
+            warm_sample = normalize_to_baseline(raw.convert("RGB"))
     except Exception:  # noqa: BLE001 - 读不到就只加载模型，不预热
         warm_sample = None
 
@@ -803,7 +804,7 @@ def main(argv: list[str] | None = None) -> int:
             # 先判别，再决定用哪套 reader —— **不双跑**。
             try:
                 with Image.open(path) as raw:
-                    probe = raw.convert("RGB")
+                    probe = normalize_to_baseline(raw.convert("RGB"))
                 detected = detect_mode(probe)
             except Exception as exc:  # noqa: BLE001
                 print(f"{path.name}  读图失败：{exc}", file=sys.stderr)
