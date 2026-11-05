@@ -8,7 +8,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+def _project_root() -> Path:
+    """定位 .env 和 data/ 所在的目录。
+
+    源码布局下是仓库根目录（src/weread_quiz/config.py 的上两级）。
+    免安装版把程序装进 site-packages，那条路径推导会指向 Python 的 Lib 目录，
+    所以启动器用 WEREQ_HOME 指向解压后的目录；没设时仍按源码布局推导。
+    """
+    home = os.environ.get("WEREQ_HOME")
+    if home:
+        return Path(home)
+    return Path(__file__).resolve().parents[2]
+
+
+PROJECT_ROOT = _project_root()
 DATA_DIR = PROJECT_ROOT / "data"
 RUNS_DIR = DATA_DIR / "runs"
 
