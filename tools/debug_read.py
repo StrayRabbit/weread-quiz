@@ -28,9 +28,10 @@ from weread_quiz.daily_ocr import (  # noqa: E402
 from weread_quiz.daily_vision import DAILY_PROMPT, build_daily_vision_service  # noqa: E402
 from weread_quiz.errors import WqError  # noqa: E402
 from weread_quiz.models import Rect  # noqa: E402
+from weread_quiz.model_service import build_model_service  # noqa: E402
 from weread_quiz.ocr_core import OcrDecision, OcrRead  # noqa: E402
 from weread_quiz.pk_ocr import TEXT_PROMPT, RapidOcrReader  # noqa: E402
-from weread_quiz.vision import PROMPT_PK, build_vision_service  # noqa: E402
+from weread_quiz.vision import PROMPT_PK  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -787,7 +788,7 @@ def main(argv: list[str] | None = None) -> int:
             vision_service = (
                 build_daily_vision_service(cfg)
                 if args.mode == "daily"
-                else build_vision_service(cfg)
+                else build_model_service(cfg)
             )
             started = time.monotonic()
             vision_service.warmup_client()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 import time
 
 from pyautogui import FailSafeException
@@ -19,7 +20,8 @@ from .pk_hybrid import HybridQuestionReader  # PK 的 OCR 快路径（门控不�
 from .pk_ocr import RapidOcrReader  # 同上
 from .route import ROUTE_PK, get_route
 from .usage import emit_usage, safe_log, usage_since, usage_snapshot
-from .vision import PROMPT_PK, build_vision_service  # 同上
+from .model_service import build_model_service
+from .vision import PROMPT_PK  # 同上
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -109,15 +111,48 @@ def _warmup_client(vision) -> float:
         return 0.0
 
 
+def _protocol_note(service) -> str:
+    """启动时说一句这个模型走的是哪种协议、能不能读图。"""
+    protocol = getattr(service, "protocol", "chat")
+    if protocol == "systemone":
+        if getattr(service, "supports_image", False):
+            return "决策模型协议判下标，整图交给视觉模型"
+        return "决策模型协议，只能判下标；整图兜底不可用"
+    return "OpenAI 兼容协议，读图 + 判下标"
+
+
+def _vision_model_note(cfg, service) -> str:
+    """配了第二个模型就说清它管哪一段 —— 两个模型各管各的。"""
+    if not getattr(cfg, "vision_model_configured", False):
+        return ""
+    decision = getattr(service, "protocol", "chat") == "systemone"
+    role = "复核 + 整图兜底" if decision else "整图兜底"
+    return f"；视觉模型 {cfg.vision_name}（{role}）"
+
+
+def _probe_text_service(service, deadline: float):
+    """发一个最小的判下标请求 —— 确认端点通、模型名对、连接也建好了。
+
+    门面自带 probe（两种协议都认）；没有门面的老对象走原来的 prompt 路径。
+    """
+    probe = getattr(service, "probe", None)
+    if callable(probe):
+        return probe(deadline)
+    return service.answer_from_text(
+        '计算 1+1。选项：0. 2；1. 3。只输出 {"answer_index":0}。',
+        2, max_tokens=512, timeout=8.0, deadline=deadline,
+    )
+
+
 def _warmup_pk_model(vision, recorder) -> None:
-    """匹配前用同一客户端真实请求一次；失败只记类型，不重试或阻止开局。"""
+    """匹配前用同一客户端真实请求一次；失败只记类型，不重试或阻止开局。
+
+    走文本路径实际用的那个服务 —— 门面自己认协议（决策模型或视觉模型）。
+    """
     started = time.monotonic()
     status = "失败（未返回预期答案）"
     try:
-        answer = vision.answer_from_text(
-            '计算 1+1。选项：0. 2；1. 3。只输出 {"answer_index":0}。',
-            2, max_tokens=512, timeout=8.0, deadline=started + 8.0,
-        )
+        answer = _probe_text_service(vision, started + 8.0)
         if answer == 0:
             status = "成功"
     except Exception as exc:  # noqa: BLE001 - 预热失败不该影响答题，不记录异常正文
@@ -235,10 +270,6 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
     recorder = RunRecorder(mode="daily")
     safe_log(recorder, f"daily 启动，dry_run={dry_run} 窗口 {region.as_dict()}")
     print(f"✓ 截图与日志：{recorder.run_dir}")
-    print(f"✓ 视觉模型：{cfg.model_name}"
-          f"（识别预算={_IDENTIFY_BUDGET_SECONDS:g}s，文本上限={_TEXT_TIMEOUT:g}s，"
-          f"图片下限={_IMAGE_PATH_MIN_BUDGET:g}s，"
-          f"服务默认 timeout={DAILY_VISION_TIMEOUT}s, retries=0）")
     print()
     if not dry_run:
         print("开始答题。鼠标会被程序控制 —— 想中止就按 Esc 键。")
@@ -251,6 +282,11 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
     vision = build_daily_vision_service(
         cfg, timing_sink=lambda message: safe_log(recorder, message)
     )
+    print(f"✓ 模型：{cfg.model_name}"
+          f"（{_protocol_note(vision)}{_vision_model_note(cfg, vision)}，"
+          f"识别预算={_IDENTIFY_BUDGET_SECONDS:g}s，"
+          f"文本上限={_TEXT_TIMEOUT:g}s，图片下限={_IMAGE_PATH_MIN_BUDGET:g}s，"
+          f"服务默认 timeout={DAILY_VISION_TIMEOUT}s, retries=0）")
     start = usage_snapshot(vision)
     # 小程序窗口置顶 + 激活：抓屏按它在屏幕上的位置来，窗口被控制台盖住
     # 就抓错画面。激活是必须的 —— GPU 合成的窗口失去焦点会停止渲染，
@@ -395,7 +431,7 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
     if trace:
         print("✓ 详细日志：分段耗时与请求时延会同步打到终端")
 
-    vision = build_vision_service(cfg, timing_sink=lambda message: safe_log(recorder, message))
+    vision = build_model_service(cfg, timing_sink=lambda message: safe_log(recorder, message))
     warm_cost = _warmup_client(vision)
     safe_log(recorder, f"客户端初始化：{warm_cost * 1000:.0f}ms（仅本地 HTTP 客户端与 SSL context，未请求模型）")
     # OCR 快路径：门控不通过就自动回退图片路径，所以接上它没有正确性
@@ -420,8 +456,10 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
     ocr_ok = reader.warmup(warm_sample)
     safe_log(recorder, f"OCR 快路径：{'启用' if ocr_ok else '不可用，全程走图片路径'}"
                        f"，最低置信度阈值 {cfg.ocr_min_confidence:.2f}")
-    print(f"✓ 视觉模型：{cfg.model_name}（失败重试 {cfg.vision_retries} 次"
-          f"，{'蒙一个' if cfg.guess_on_failure else '停下'}）")
+    print(f"✓ 模型：{cfg.model_name}（{_protocol_note(vision)}"
+          f"{_vision_model_note(cfg, vision)}，"
+          f"失败重试 {cfg.vision_retries} 次，"
+          f"{'蒙一个' if cfg.guess_on_failure else '停下'}）")
     print(f"✓ OCR 快路径：{'已预热' if ocr_ok else '不可用（回退图片路径）'}"
           f"，置信度阈值 {cfg.ocr_min_confidence:.2f}")
     print()
@@ -507,18 +545,25 @@ def _run_pk_with_vision(cfg, region, vision, recorder, dry_run, max_questions,
         print("开始答题。鼠标会被程序控制 —— 想中止就按 Esc 键。")
         print("过期或题面变化会跳过，不点击；记录按处理轮次编号，未必对应实际题号。")
         print()
-        report = run_pk(
-            region,
-            vision,
-            max_questions=max_questions,
-            guess_on_failure=cfg.guess_on_failure,
-            recorder=recorder,
-            next_question_delay=getattr(cfg, "pk_next_question_delay", None),
-            ocr_fallback_seconds=getattr(cfg, "pk_ocr_fallback_seconds", None),
-            # 复用同一个 OCR 引擎读题号 —— 已经在上面预热过了。
-            ocr=getattr(vision, "_ocr", None),
-            refresh=refresh,
-        )
+        try:
+            report = run_pk(
+                region,
+                vision,
+                max_questions=max_questions,
+                guess_on_failure=cfg.guess_on_failure,
+                recorder=recorder,
+                next_question_delay=getattr(cfg, "pk_next_question_delay", None),
+                ocr_fallback_seconds=getattr(cfg, "pk_ocr_fallback_seconds", None),
+                # 复用同一个 OCR 引擎读题号 —— 已经在上面预热过了。
+                ocr=getattr(vision, "_ocr", None),
+                refresh=refresh,
+            )
+        except BaseException:
+            # 异常只打在控制台的话，run.log 里什么都没有 —— 下次只能靠猜。
+            # 把完整 traceback 落进日志（用户自己的机器，不涉及外发）。
+            if recorder:
+                safe_log(recorder, f"运行异常：\n{traceback.format_exc()}")
+            raise
 
         if report.questions:
             skipped_first = report.skipped_first_questions()

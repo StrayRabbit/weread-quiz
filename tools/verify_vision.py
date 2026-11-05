@@ -10,7 +10,7 @@ from PIL import Image
 
 from weread_quiz.buttons import find_option_buttons
 from weread_quiz.config import AppConfig
-from weread_quiz.vision import build_vision_service
+from weread_quiz.model_service import build_model_service
 
 
 def main() -> int:
@@ -20,7 +20,8 @@ def main() -> int:
         print(f"{shot_dir} 里没有截图")
         return 1
 
-    service = build_vision_service(AppConfig.from_env())
+    # 走门面 —— 主模型是决策模型时，读图的是视觉模型（VISION_*）。
+    service = build_model_service(AppConfig.from_env())
     try:
         _verify_shots(shots, service)
     finally:

@@ -443,6 +443,11 @@ def wait_for_question(region, vision, timeout: float = 120.0, verbose: bool = Tr
     local_only = (capture_context is not None
                   and callable(getattr(vision, "read_question_local", None))
                   and getattr(vision, "local_ocr_available", None) is not False)
+    # 这个模型能不能读图 —— 决策模型读不了图。
+    #
+    # 本地 OCR 读不出题时，整图兜底要调的就是一个能读图的模型。没有的话
+    # 兜底是空的：判否 → 没模型能救 → 下一帧还是判否 → 一直空转到总超时。
+    can_read_image = getattr(vision, "supports_image", True)
     wait_started = time.monotonic()
     deadline = time.time() + timeout
     polls = 0
@@ -495,6 +500,15 @@ def wait_for_question(region, vision, timeout: float = 120.0, verbose: bool = Tr
         gate_started = time.perf_counter()
         image = grab_screen(region)
         polls += 1
+        # 等待期间每 10 秒说一句话 —— 干等两分钟什么日志都不出，
+        # 用户只能对着屏幕猜程序是不是死了。
+        if recorder and polls % 100 == 1:
+            waited = time.monotonic() - wait_started
+            note = (f"等待答题页：已等 {waited:.0f}s（{polls} 轮），"
+                    f"本地判据还没放行")
+            if not can_read_image:
+                note += "；这个模型读不了图（决策模型），没有整图兜底"
+            safe_log(recorder, note)
         if is_blank_frame(image):
             # 窗口刚被抬起来、还没把内容画出来（GPU 合成窗口失去焦点会
             # 停止渲染）。空白帧读不出任何东西 —— 记着连续几次好去叫醒窗口。

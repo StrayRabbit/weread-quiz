@@ -122,15 +122,17 @@ class DailyReport:
 
 
 def build_daily_vision_service(cfg, *, timing_sink=None) -> VisionService:
-    """构造独立视觉服务：默认超时 11.5 秒、零重试、严格截断处理，思考开关来自配置。"""
-    return VisionService(
-        base_url=cfg.model_base_url,
-        api_key=cfg.model_api_key,
-        model=cfg.model_name,
+    """构造模型服务：默认超时 11.5 秒、零重试、严格截断处理，思考开关来自配置。
+
+    协议由代码自己认（见 model_service 模块）—— 主模型一组，视觉模型可选。
+    """
+    from .model_service import build_model_service
+
+    return build_model_service(
+        cfg,
         timeout=DAILY_VISION_TIMEOUT,
         retries=DAILY_VISION_RETRIES,
         recover_truncated_response=False,
-        thinking=cfg.model_thinking,
         timing_sink=timing_sink,
     )
 

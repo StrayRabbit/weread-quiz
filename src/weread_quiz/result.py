@@ -6,6 +6,7 @@ import re
 
 from PIL import Image
 
+from .errors import AnswerUnavailable
 from .usage import safe_log
 
 # 只接受已经确认过的奖励档位，不把对战比分当作奖励。
@@ -55,6 +56,10 @@ def read_result(image: Image.Image, vision=None, *, ocr=None, recorder=None,
     safe_log(recorder, "结算本地无可靠证据，使用图片模型")
     try:
         detail = vision.read_result_detail(image)
+    except AnswerUnavailable as exc:
+        # 决策模型读不了图 —— 结算页就这么读不出来。说清楚，别只丢个异常类型。
+        safe_log(recorder, f"结算页读不了：{exc}（没有能读图的模型）")
+        return _apply_score(local, score)
     except Exception as exc:  # noqa: BLE001 - 不记录可能带敏感上下文的异常正文
         safe_log(recorder, f"结算图片识别失败（{type(exc).__name__}）")
         return _apply_score(local, score)

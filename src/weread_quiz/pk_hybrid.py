@@ -63,6 +63,8 @@ class HybridQuestionReader:
         verbose: bool = True,
         log_sink=None,
     ) -> None:
+        # vision 是模型服务门面 —— 文本路径和整图路径都走它，
+        # 用哪种协议由门面自己认（见 model_service 模块）。
         self._vision = vision
         self._ocr = ocr or RapidOcrReader()
         self._verbose = verbose

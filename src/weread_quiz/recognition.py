@@ -51,7 +51,27 @@ def read_local(ocr, image: Image.Image, *, deadline: float | None = None,
     )
 
 
-def answer_from_read(vision: VisionService, read: OcrRead, prompt: str, *,
+def _ask_index(vision, read: OcrRead, prompt: str, options: str,
+               **request_options) -> int | None:
+    """向模型要下标。
+
+    模型服务门面（ModelService）自带 ``choose_index`` —— 由它决定"主模型
+    先答、拿不准转给视觉模型复核"。没有这个方法的（测试替身）走原来
+    两条路：决策模型要结构化的题干 + 选项（criteria），普通视觉模型要
+    拼好的 prompt。
+    """
+    chooser = getattr(vision, "choose_index", None)
+    if chooser is not None:
+        return chooser(read.stem, list(read.options), prompt=prompt,
+                       **request_options)
+    if getattr(vision, "supports_structured_choice", False):
+        return vision.answer_options(read.stem, list(read.options),
+                                      **request_options)
+    return vision.answer_from_text(prompt % (read.stem, options),
+                                    len(read.options), **request_options)
+
+
+def answer_from_read(vision, read: OcrRead, prompt: str, *,
                      timeout: float | None = None,
                      deadline: float | None = None,
                      log: Callable[[str], None] | None = None) -> VisionQuestion | None:
@@ -66,8 +86,7 @@ def answer_from_read(vision: VisionService, read: OcrRead, prompt: str, *,
     request_options = {"timeout": timeout}
     if deadline is not None:
         request_options["deadline"] = deadline
-    index = vision.answer_from_text(prompt % (read.stem, options),
-                                    len(read.options), **request_options)
+    index = _ask_index(vision, read, prompt, options, **request_options)
     _check_deadline(deadline)
     if index is None or not (0 <= index < len(read.options)):
         return None

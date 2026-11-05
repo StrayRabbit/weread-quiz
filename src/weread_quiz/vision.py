@@ -35,6 +35,14 @@ _TIMEOUT_SECONDS = 11.0
 # 重试前的等待。模型单次调用 2.9~5.8 秒，等 0.5 秒几乎不占预算。
 _RETRY_BACKOFF_SECONDS = 0.5
 
+# 读图的 token 预算。
+#
+# **思考模型会把预算吃光** —— 实测 deepseek-flash 读图时推理部分就用了
+# 800~2700 token，预算给 1200 会有 17% 的图返回空内容（finish_reason=length）。
+# 给到 2000 起步，返回空时翻倍重试（同一个请求原样重发还是空）。
+_IMAGE_MAX_TOKENS = 2000
+_MAX_TOKENS_CEILING = 8000
+
 _QUESTION_NO_BAND = (250, 300)
 
 PROMPT = """这是微信读书每日一答小程序的一个界面截图。
@@ -287,6 +295,8 @@ class VisionService:
         *,
         recover_truncated_response: bool = True,
         thinking: bool = True,
+        enabled: bool = True,
+        usage: UsageTracker | None = None,
         timing_sink: Callable[[str], None] | None = None,
     ) -> None:
         self._url = f"{base_url.rstrip('/')}/chat/completions"
@@ -295,11 +305,14 @@ class VisionService:
             "Content-Type": "application/json",
         }
         self._model = model
+        # 没配视觉模型时这是个"哑"服务 —— 整图路径一调用就明确报错，
+        # 而不是发一个注定失败的请求（决策模型独占模式）。
+        self._enabled = enabled
         # 是否是 MiniMax 端点 —— 决定要不要发 thinking 私有扩展。
         self._is_minimax = _is_minimax_endpoint(base_url, model)
         self._timeout = timeout
         self.retries = max(0, retries)
-        self.usage = UsageTracker()
+        self.usage = usage if usage is not None else UsageTracker()
         self.last_question_usage = self.usage.snapshot()
         # 长连接，惰性创建。见 _get_client 的说明。
         self._client: httpx.Client | None = None
@@ -340,15 +353,21 @@ class VisionService:
         self.close()
 
     def recognize(self, image: Image.Image, prompt: str = PROMPT, *,
-                  timeout: float | None = None, deadline: float | None = None) -> str:
+                  timeout: float | None = None, deadline: float | None = None,
+                  max_tokens: int | None = None) -> str:
         """发一张图给模型，返回原始文本（已剥离 think 块）。"""
+        if not self._enabled:
+            # 没配视觉模型 —— 立刻说清楚，不要发一个注定失败的请求。
+            raise AnswerUnavailable("vision_model_not_configured")
         retries = self.retries if deadline is None else 0
         last_error: Exception | None = None
+        budget = max_tokens or _IMAGE_MAX_TOKENS
         for attempt in range(retries + 1):
             try:
                 _check_deadline(deadline)
                 options = {"deadline": deadline} if deadline is not None else {}
-                text = self._call_once(image, prompt, timeout=timeout, **options)
+                text = self._call_once(image, prompt, timeout=timeout,
+                                       max_tokens=budget, **options)
             except RecognitionTimeout:
                 # deadline_exceeded：如果 deadline 还没到，重试一次。
                 #
@@ -360,7 +379,8 @@ class VisionService:
                     time.sleep(_RETRY_BACKOFF_SECONDS)
                     try:
                         options = {"deadline": deadline} if deadline is not None else {}
-                        text = self._call_once(image, prompt, timeout=timeout, **options)
+                        text = self._call_once(image, prompt, timeout=timeout,
+                                               max_tokens=budget, **options)
                         if text.strip():
                             return text
                     except Exception:  # noqa: BLE001
@@ -372,6 +392,9 @@ class VisionService:
                 if text.strip():
                     return text
                 last_error = AnswerUnavailable("模型返回为空")
+                # 返回空 = 思考块把预算吃光了（finish_reason=length）。
+                # 原样重发一次还是空 —— 把预算翻倍才有意义。
+                budget = min(budget * 2, _MAX_TOKENS_CEILING)
 
             if attempt < retries:
                 # 快速失败说明是服务端抖动，歇一下比重连更有用。
@@ -389,7 +412,8 @@ class VisionService:
         return RequestTiming(self._timing_sink, self.usage.snapshot().requests + 1)
 
     def _call_once(self, image: Image.Image, prompt: str, *,
-                   timeout: float | None = None, deadline: float | None = None) -> str:
+                   timeout: float | None = None, deadline: float | None = None,
+                   max_tokens: int = _IMAGE_MAX_TOKENS) -> str:
         timing = self._new_timing()
         try:
             with timing.stage("编码"):
@@ -403,6 +427,7 @@ class VisionService:
                 {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": image_url}},
             ],
+            max_tokens=max_tokens,
             timeout=timeout,
             **({"deadline": deadline} if deadline is not None else {}),
         )
@@ -681,15 +706,3 @@ class VisionService:
             key: data.get(key, "").strip() if isinstance(data.get(key), str) else ""
             for key in ("result", "title", "score")
         }
-
-
-def build_vision_service(cfg, *, timing_sink: Callable[[str], None] | None = None) -> VisionService:
-    cfg.validate_model()
-    return VisionService(
-        base_url=cfg.model_base_url,
-        api_key=cfg.model_api_key,
-        model=cfg.model_name,
-        retries=cfg.vision_retries,
-        thinking=cfg.model_thinking,
-        timing_sink=timing_sink,
-    )

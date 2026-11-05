@@ -30,6 +30,7 @@ class DailyHybridReader:
 
     def __init__(self, vision: VisionService, ocr: DailyOcrReader | None = None,
                  *, verbose: bool = True, log_sink=None) -> None:
+        # vision 是模型服务门面 —— 文本路径和整图路径都走它。
         self._vision = vision
         self._ocr = ocr or DailyOcrReader()
         self._verbose = verbose
