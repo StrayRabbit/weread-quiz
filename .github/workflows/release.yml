@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "要发布/更新的 tag（例如 v0.1.0）"
+        description: "要发布/更新的 tag（例如 v1.0.0）"
         required: true
         type: string
 

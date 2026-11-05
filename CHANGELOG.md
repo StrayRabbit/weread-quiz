@@ -3,7 +3,7 @@
 版本记录。免安装包（解压即用，含便携 Python）在
 [Releases](https://github.com/StrayRabbit/weread-quiz/releases) 里下。
 
-## v0.1.0 — 2026-11-05
+## v1.0.0 — 2026-11-05
 
 首个公开版本。
 
