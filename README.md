@@ -1,6 +1,6 @@
 # weread-quiz
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green) ![Model](https://img.shields.io/badge/model-OpenAI%20%E5%85%BC%E5%AE%B9-informational)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green) ![Model](https://img.shields.io/badge/model-OpenAI%20%E5%85%BC%E5%AE%B9-informational) ![Release](https://img.shields.io/github/v/release/StrayRabbit/weread-quiz)
 
 微信读书「每日一答」/「问答 PK」自动答题工具（Windows）。
 
@@ -56,8 +56,21 @@ flowchart TD
 
 ## 快速开始
 
+### 方式一：下载免安装包（不用装 Python）
+
+从 [Releases](https://github.com/StrayRabbit/weread-quiz/releases) 下 `weread-quiz-v*-win64.zip`：
+
+1. 解压
+2. 双击 **`首次配置.bat`** —— 它把 `.env.example` 复制成 `.env` 并用记事本打开，填 `MODEL_BASE_URL` / `MODEL_API_KEY` / `MODEL_NAME` 三行
+3. 在微信里打开微信读书小程序（游戏中心入口页）
+4. 双击 **`启动PK.bat`**
+
+包里自带便携 Python，**不用装 Python，也不用装 uv**。
+
+### 方式二：源码运行（需要 Python 3.10+）
+
 ```bash
-# 1. 装依赖（需要 Python 3.10+）
+# 1. 装依赖
 uv sync
 
 # 2. 配模型（OpenAI 兼容端点）
@@ -89,6 +102,10 @@ cp .env.example .env
 | `启动PK.bat` | 问答 PK：自动匹配 → 答完整局（常规 10 题，平局加时赛会接着答） |
 | `启动每日一答-瓜分天数.bat` | 每日一答：瓜分天数路线 → 答完 12 题 |
 | `启动每日一答-瓜分书币.bat` | 每日一答：瓜分书币路线 → 答完 12 题 |
+
+另有 `首次配置.bat` —— 生成并打开 `.env`（免安装包用它做第一步）。
+
+同一套启动器在两种部署下都能用：免安装包用随包的 `python/`，源码运行用项目的 `.venv/`。
 
 命令行形式等价：
 
@@ -138,6 +155,16 @@ weread-quiz clean           # 清理旧截图（保留最近 30 天）
 ## 已知限制
 
 - 仅 Windows，依赖 mss 抓屏 / RapidOCR 本地识别 / pyautogui 点击。
+
+## 自己构建免安装包
+
+```bash
+uv run python tools/build_release.py
+```
+
+产物在 `dist/weread-quiz-v*-win64.zip`。依赖版本按 `uv.lock` 锁死，便携 Python 版本固定在 `tools/build_release.py` 的 `PYTHON_SPEC`；打包后脚本会自检「暂存目录能跑」和「解压后也能跑」。
+
+打 `v*` tag 推上去，GitHub Actions 会自动构建并发布到 Releases。
 
 ## 支持与反馈
 
