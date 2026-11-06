@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .pk_budget import _TEXT_PATH_TIMEOUT
+
 def _project_root() -> Path:
     """定位 .env 和 data/ 所在的目录。
 
@@ -103,6 +105,14 @@ class AppConfig:
     daily_ocr_min_confidence: float = 0.85
     pk_next_question_delay: float = 1.0
     pk_ocr_fallback_seconds: float = 3.0
+    # PK 文本路径（本地 OCR 读题 + 模型只判下标）的单次上限（秒）。
+    #
+    # 默认 5 秒是给快模型留的。慢模型要调高 —— 实测 MiniMax-M3.1-Flash
+    # 文本路径 3.2~4.6 秒、偶尔超过 5 秒，被切掉就只能蒙答。
+    #
+    # 调高要一起看预算：倒计时 12 秒减去点击预留是 10.5 秒，文本路径
+    # 占 6.5 秒就只剩 4 秒给图片路径（读图要 5.5 秒以上）。
+    pk_text_timeout: float = _TEXT_PATH_TIMEOUT
 
     # 决策模型拿不准时的**复核门槛** —— 置信度低于它就转给视觉模型复核。
     #
@@ -242,6 +252,19 @@ class AppConfig:
                 f"PK_OCR_FALLBACK_SECONDS 不能为负数，收到 {pk_ocr_fallback_seconds}"
             )
 
+        try:
+            pk_text_timeout = float(
+                os.getenv("PK_TEXT_TIMEOUT", str(_TEXT_PATH_TIMEOUT))
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"PK_TEXT_TIMEOUT 必须是数字，收到 {os.getenv('PK_TEXT_TIMEOUT')!r}"
+            ) from exc
+        if pk_text_timeout <= 0:
+            raise ValueError(
+                f"PK_TEXT_TIMEOUT 必须大于 0，收到 {pk_text_timeout}"
+            )
+
         raw_confidence = os.getenv("MODEL_MIN_CONFIDENCE", "").strip()
         if raw_confidence:
             try:
@@ -272,6 +295,7 @@ class AppConfig:
             daily_ocr_min_confidence=daily_ocr_min_confidence,
             pk_next_question_delay=pk_next_question_delay,
             pk_ocr_fallback_seconds=pk_ocr_fallback_seconds,
+            pk_text_timeout=pk_text_timeout,
             model_min_confidence=model_min_confidence,
         )
 

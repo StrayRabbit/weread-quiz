@@ -441,6 +441,7 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
         ocr=RapidOcrReader(min_confidence=cfg.ocr_min_confidence),
         verbose=not dry_run,
         log_sink=lambda message: safe_log(recorder, message),
+        text_timeout=cfg.pk_text_timeout,
     )
     # 预热要一张真实尺寸的图：onnx 的首次推理成本与输入尺寸相关，
     # 用合成小图预热不能真正覆盖。这里抓一张当前窗口 —— 此时还没进入
@@ -458,6 +459,7 @@ def _cmd_pk(dry_run: bool, max_questions: int, keep_days: int | None = None,
                        f"，最低置信度阈值 {cfg.ocr_min_confidence:.2f}")
     print(f"✓ 模型：{cfg.model_name}（{_protocol_note(vision)}"
           f"{_vision_model_note(cfg, vision)}，"
+          f"文本上限 {cfg.pk_text_timeout:g}s，"
           f"失败重试 {cfg.vision_retries} 次，"
           f"{'蒙一个' if cfg.guess_on_failure else '停下'}）")
     print(f"✓ OCR 快路径：{'已预热' if ocr_ok else '不可用（回退图片路径）'}"

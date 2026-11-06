@@ -16,14 +16,14 @@ from .vision import VisionQuestion, VisionService, _check_deadline
 _QUESTION_WINDOW_SECONDS = 12.0
 
 
-def _text_timeout(timeout: float | None) -> float:
-    """文本路径的单次上限：再慢也不能超过 _TEXT_PATH_TIMEOUT。
+def _text_timeout(timeout: float | None, cap: float) -> float:
+    """文本路径的单次上限：再慢也不能超过 cap。
 
     留出来的预算给图片路径 —— 两条路都试过还答不出来的，才是真没救。
     """
     if timeout is None:
-        return _TEXT_PATH_TIMEOUT
-    return min(timeout, _TEXT_PATH_TIMEOUT)
+        return cap
+    return min(timeout, cap)
 
 
 def _short_reason(reason: str) -> str:
@@ -62,6 +62,7 @@ class HybridQuestionReader:
         *,
         verbose: bool = True,
         log_sink=None,
+        text_timeout: float | None = None,
     ) -> None:
         # vision 是模型服务门面 —— 文本路径和整图路径都走它，
         # 用哪种协议由门面自己认（见 model_service 模块）。
@@ -69,6 +70,10 @@ class HybridQuestionReader:
         self._ocr = ocr or RapidOcrReader()
         self._verbose = verbose
         self._log_sink = log_sink
+        # 文本路径的单次上限（秒）。默认 pk_budget._TEXT_PATH_TIMEOUT；
+        # 慢模型可以在配置里调高（PK_TEXT_TIMEOUT）。
+        self.text_timeout = (float(text_timeout) if text_timeout is not None
+                             else _TEXT_PATH_TIMEOUT)
         self.local_ocr_available: bool | None = None
         self.last_question_progress_text = ""
         self.last_question_local_finished_at = None
@@ -157,7 +162,7 @@ class HybridQuestionReader:
                 return None
             started = time.monotonic()
             self.last_question_model_started_at = started
-            question = self._answer_from_text(read, timeout=_text_timeout(timeout),
+            question = self._answer_from_text(read, timeout=_text_timeout(timeout, self.text_timeout),
                                               deadline=deadline)
             text_elapsed = time.monotonic() - started
             if question is not None:

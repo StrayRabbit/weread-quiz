@@ -885,23 +885,27 @@ def _guess_after_timeout(region, image, question, skip, guess_on_failure,
 
 
 def _answer_from_pre_read(vision, ocr_read, *, deadline: float | None = None):
-    """复用预读请求一次文本答案；单次最多 _TEXT_PATH_TIMEOUT 秒。
+    """复用预读请求一次文本答案；单次最多文本路径上限秒。
 
     剩下的预算留给图片路径 —— 文本路径一慢就整题蒙答太浪费（见
-    pk_budget._TEXT_PATH_TIMEOUT）。
+    pk_budget._TEXT_PATH_TIMEOUT）。上限由配置给（PK_TEXT_TIMEOUT）——
+    混合读取器带着这个值，替身没有就退回默认值。
     """
     answer = getattr(vision, "answer_from_ocr_read", None)
     if answer is None:
         return None
+    cap = getattr(vision, "text_timeout", None)
+    if cap is None:
+        cap = _TEXT_PATH_TIMEOUT
     if deadline is None:
-        return answer(ocr_read, timeout=_TEXT_PATH_TIMEOUT)
+        return answer(ocr_read, timeout=cap)
     now = time.monotonic()
     remaining = deadline - now
     if remaining <= 0:
         # 保留完整本地预读的旧时间戳豁免，点击前仍须通过同题校验。
         remaining = 3.0
         deadline = now + remaining
-    question = answer(ocr_read, timeout=min(remaining, _TEXT_PATH_TIMEOUT),
+    question = answer(ocr_read, timeout=min(remaining, cap),
                       deadline=deadline)
     if time.monotonic() >= deadline:
         raise RecognitionTimeout("deadline_exceeded")
