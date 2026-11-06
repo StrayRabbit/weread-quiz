@@ -54,6 +54,16 @@ _STRIP_LEFT = 38
 _STRIP_RIGHT = 392
 _STRIP_SCALE = 2.0
 
+# 拼接时按钮带之间的**垂直间隙**。
+#
+# 各带的文字区原本是紧挨着拼起来的（np.vstack 不留空隙），RapidOCR 的
+# 文本检测器会把三个单字当成**一条竖排文字**读出来 —— 实测
+# 「数/面/唠」读成「敷面磅」，「滔/湛/淼」读成「滔湛淼」。于是拼接路
+# 在最需要它的单字选项上必然失效（它本来就是为单字选项准备的）。
+#
+# 16px（原图尺度，放大后 32px）足以让检测器把三行分开。
+_STRIP_GAP = 16
+
 _CENTER_TOLERANCE_RATIO = 0.5
 
 _BAND_EDGE_TOLERANCE = 6
@@ -387,13 +397,20 @@ class DailyOcrReader(RapidOcrEngine):
 
     def _build_strip(self, image: Image.Image,
                      bands: list[tuple[int, int]]) -> Image.Image | None:
-        """将各按钮文字区纵向拼接，并放大 2 倍供 OCR 识别。"""
+        """将各按钮文字区纵向拼接，并放大 2 倍供 OCR 识别。
+
+        带与带之间留 `_STRIP_GAP` 的黑缝 —— 不留缝的话检测器会把几个
+        单字当成一条竖排文字读（见 `_STRIP_GAP` 的说明）。
+        """
         array = np.asarray(image.convert("RGB"))
         parts = []
-        for top, bottom in bands:
+        for index, (top, bottom) in enumerate(bands):
             upper, lower = top + _STRIP_PAD_V, bottom - _STRIP_PAD_V
             if upper >= lower:
                 return None
+            if index and _STRIP_GAP:
+                parts.append(np.zeros((_STRIP_GAP, _STRIP_RIGHT - _STRIP_LEFT, 3),
+                                      dtype=array.dtype))
             parts.append(array[upper:lower, _STRIP_LEFT:_STRIP_RIGHT])
         if not parts:
             return None

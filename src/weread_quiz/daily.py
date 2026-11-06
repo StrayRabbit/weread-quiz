@@ -54,6 +54,14 @@ _TEXT_TIMEOUT = 5.0
 # 直接蒙答，别发一个注定超时的请求把时间白烧掉（与 PK 同判据）。
 _IMAGE_PATH_MIN_BUDGET = 3.5
 
+# 图龄超过这个值就**多问一次题号**，不是把答案作废。
+#
+# 以前这里是"超时即作废"（8 秒），而单题识别预算是 9 秒 —— 预算比
+# 上限大，**图片路径一慢答案就必然被丢掉**（2026-11-06 实测：模型
+# 7.45 秒才回，第 1 题被扔掉，整局输在第一题）。
+#
+# 现在改成按题号复核：题号是界面自己写的身份标记，题号没变就还是
+# 那道题，答案照样能用（见 `_still_same_question`）。
 _MAX_CAPTURE_AGE = 8.0
 _LOCAL_FALLBACK_SECONDS = 3.0
 
@@ -258,8 +266,6 @@ def _identify_question(cfg, image, context):
         if question is not None and time.monotonic() < text_deadline:
             return question
     _check_deadline(deadline)
-    if context.captured_at is not None and time.monotonic() - context.captured_at >= _MAX_CAPTURE_AGE:
-        raise RecognitionTimeout("capture_too_old")
     # 图片路径值不值得试：**看还剩多少预算**。不够就别发 —— 发了也只是
     # 再等一次超时，然后照旧蒙答（与 PK 的判据一致）。
     remaining = deadline - time.monotonic()
@@ -270,6 +276,45 @@ def _identify_question(cfg, image, context):
         raise RecognitionTimeout(message)
     return read_daily_answer(cfg.vision, image, timeout=_IDENTIFY_BUDGET_SECONDS,
                              deadline=deadline, visual_only=context.local_attempted)
+
+
+def _expected_progress_no(question, context) -> int | None:
+    """这道题的题号：题面读数优先，其次模型读数。
+
+    **读不出就是 None，绝不猜** —— 题号猜错会把另一道题的答案点出去。
+    """
+    for source in (question, getattr(context, "ocr_read", None)):
+        number = getattr(source, "progress_no", None)
+        if number is not None:
+            return number
+    return None
+
+
+def _still_same_question(cfg, question, context, fresh) -> bool:
+    """按题号复核：屏幕上现在还是刚才那道题吗？
+
+    题号（「第N题·共12题」）是界面自己写的身份标记，比"截图是几秒前的"
+    可靠 —— 截图可能过期，但题号没变就还是那道题，模型给的下标仍然
+    对得上那个按钮。
+
+    三条都要成立：
+    1. 题号行还在（还在答题卡片上，没跑到别的页面）；
+    2. 题面没揭示（揭示 = 已答或已超时，这道题已经结束了）；
+    3. 题号和刚才那道题一致。
+    """
+    if not has_progress_line(fresh) or has_answer_reveal(fresh):
+        return False
+    expected = _expected_progress_no(question, context)
+    if expected is None:
+        return False
+    reader = getattr(cfg.vision, "read_progress_number", None)
+    if not callable(reader):
+        return False
+    try:
+        current = reader(fresh)
+    except Exception:  # noqa: BLE001 - 读不出当"不是同一道题"
+        return False
+    return current == expected
 
 
 def _skip_result(question, reason):
@@ -309,7 +354,24 @@ def answer_one_question(
                 watch.mark("模型识别")
         if (not cfg.dry_run and not question.local_read
                 and time.monotonic() - context.captured_at >= _MAX_CAPTURE_AGE):
-            return _skip_result(question, "capture_too_old")
+            # 图龄超限**不再直接丢答案** —— 按题号复核一次。
+            #
+            # 题号是界面自己写的身份标记：截图可能过期，但题号没变就还是
+            # 那道题，模型给的下标仍然对得上那个按钮；题号变了就不是同一
+            # 道题，照旧不能点。
+            #
+            # 复核通过就用这一帧继续（点击前的同题校验还会再核一遍）。
+            fresh = grab_screen(cfg.region)
+            age = time.monotonic() - context.captured_at
+            if not _still_same_question(cfg, question, context, fresh):
+                safe_log(cfg.recorder,
+                         f"图龄 {age:.1f}s，按题号复核未通过"
+                         "（题号变了/题面已揭示/题号读不出），未点击")
+                return _skip_result(question, "capture_too_old")
+            safe_log(cfg.recorder,
+                     f"图龄 {age:.1f}s，按题号复核仍是第"
+                     f"{_expected_progress_no(question, context)} 题，继续作答")
+            image = fresh
         result = _answer_one_question_inner(cfg, image, question, watch,
                                             feedback=feedback)
         result["progress_no"] = (getattr(question, "progress_no", None)

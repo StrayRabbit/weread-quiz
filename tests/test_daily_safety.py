@@ -48,6 +48,7 @@ def test_model_failure_guesses_only_after_validation(desktop):
 
 
 def test_slow_image_response_never_clicks(desktop, clock):
+    """慢模型返回、题号又读不出来时 —— 不能点。"""
     class Slow(Vision):
         def read_question(self, *args, **kwargs):
             clock.sleep(9)
@@ -55,6 +56,63 @@ def test_slow_image_response_never_clicks(desktop, clock):
 
     result = daily.answer_one_question(config(Slow()), desktop[0], None, 1,
                                        capture_context=daily.DailyCaptureContext(captured_at=100.0))
+    assert result["skipped"] and not desktop[1]
+
+
+def _slow_vision(clock, number):
+    """慢模型（8.5 秒，超过 8 秒图龄但还在 9 秒预算内）+ 能报题号的视觉服务。"""
+    class Slow(Vision):
+        def read_question(self, *args, **kwargs):
+            clock.sleep(8.5)
+            return super().read_question(*args, **kwargs)
+
+    vision = Slow()
+    vision.read_progress_number = lambda image: number
+    return vision
+
+
+def test_slow_image_response_clicks_when_question_number_unchanged(desktop, clock, monkeypatch):
+    """图龄超限但题号没变 —— 照样答，别把这一题白白丢掉。
+
+    以前是"超时即作废"，而单题识别预算 9 秒 > 图龄上限 8 秒 —— 图片
+    路径一慢答案就**必然**被丢掉（2026-11-06 实测：模型 7.45 秒才回，
+    第 1 题被扔掉，整局输在第一题）。
+    """
+    monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
+    context = daily.DailyCaptureContext(captured_at=100.0, ocr_read=read())
+    result = daily.answer_one_question(config(_slow_vision(clock, 1)),
+                                       desktop[0], None, 1, capture_context=context)
+    assert not result.get("skipped")
+    assert result["answer"] == 2
+    assert desktop[1] == [460]
+
+
+def test_slow_image_response_skips_when_question_number_changed(desktop, clock, monkeypatch):
+    """题号变了就是另一道题 —— 慢答案不能点出去。"""
+    monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
+    context = daily.DailyCaptureContext(captured_at=100.0, ocr_read=read())
+    result = daily.answer_one_question(config(_slow_vision(clock, 2)),
+                                       desktop[0], None, 1, capture_context=context)
+    assert result["skipped"] and not desktop[1]
+    assert result["error"] == "capture_too_old"
+
+
+def test_slow_image_response_skips_when_question_already_revealed(desktop, clock, monkeypatch):
+    """题面已经揭示（已答或已超时）—— 这一题结束了，不能再点。"""
+    monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
+    monkeypatch.setattr(daily, "has_answer_reveal", lambda image: True)
+    context = daily.DailyCaptureContext(captured_at=100.0, ocr_read=read())
+    result = daily.answer_one_question(config(_slow_vision(clock, 1)),
+                                       desktop[0], None, 1, capture_context=context)
+    assert result["skipped"] and not desktop[1]
+
+
+def test_unknown_question_number_never_clicks(desktop, clock, monkeypatch):
+    """题号读不出来 —— 不能猜，照旧不点。"""
+    monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
+    context = daily.DailyCaptureContext(captured_at=100.0)
+    result = daily.answer_one_question(config(_slow_vision(clock, None)),
+                                       desktop[0], None, 1, capture_context=context)
     assert result["skipped"] and not desktop[1]
 
 
@@ -297,3 +355,60 @@ def test_daily_log_distinguishes_guess_from_model_answer(desktop, monkeypatch, d
     assert any(marker in line and "第 1 个按钮" in line
                and "模型没给出合法答案下标" in line for line in logs)
     assert not any("→ ?" in line for line in logs)
+
+
+def test_question_number_prefers_fast_recognition():
+    """题号行是位置已知的窄带：只识别不检测（1050ms → 20ms）。
+
+    读题号要用在「答案到了以后按题号复核」这条路上，慢不起。
+    """
+    from weread_quiz import daily_number
+
+    calls = []
+
+    class Engine:
+        def _engine_run_text(self, image):
+            calls.append("text")
+            return [("第1题·共12题", 0.95)]
+
+        def _engine_run(self, image):
+            calls.append("detect")
+            return [(None, "第1题·共12题", 0.9)]
+
+    assert daily_number.read_question_number(Image.new("RGB", (430, 788)),
+                                             ocr=Engine()) == 1
+    assert calls == ["text"]
+
+
+def test_question_number_falls_back_to_detection():
+    """识别模式读不出整条时退回检测模式（那条对噪声更稳）。"""
+    from weread_quiz import daily_number
+
+    class Engine:
+        def _engine_run_text(self, image):
+            return None
+
+        def _engine_run(self, image):
+            return [(None, "第2题·共12题", 0.9)]
+
+    assert daily_number.read_question_number(Image.new("RGB", (430, 788)),
+                                             ocr=Engine()) == 2
+
+
+def test_strip_keeps_gap_between_bands():
+    """拼接路必须留缝。
+
+    不留缝的话 RapidOCR 的检测器会把几个单字当成一条竖排文字读出来
+    （实测「数/面/唠」读成「敷面磅」）—— 拼接路本来是为单字选项准备的，
+    那样就等于没有。
+    """
+    from weread_quiz import daily_ocr
+
+    image = Image.new("RGB", (430, 788), (20, 35, 70))
+    bands = [(100, 140), (170, 210), (240, 280)]
+    strip = daily_ocr.DailyOcrReader()._build_strip(image, bands)
+    assert strip is not None
+    text_height = sum(bottom - top - 2 * daily_ocr._STRIP_PAD_V
+                       for top, bottom in bands)
+    expected = text_height + daily_ocr._STRIP_GAP * (len(bands) - 1)
+    assert strip.size[1] == expected * daily_ocr._STRIP_SCALE

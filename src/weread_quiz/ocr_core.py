@@ -227,6 +227,28 @@ class RapidOcrEngine:
         except Exception:  # noqa: BLE001
             return None
 
+    def _engine_run_text(self, image: Image.Image):
+        """只跑识别，不跑文本检测。返回 [(文字, 置信度), ...]。
+
+        给**位置已知**的窄文字带用（比如题号行）：文本检测器要在整条
+        里找框，慢得离谱 —— 题号行实测 1050ms，识别模式只要 20ms。
+
+        识别模式认不出整条时返回 None，调用方可以退回检测模式。
+        """
+        if not self.warmup():
+            return None
+        try:
+            output = self._engine(np.asarray(image.convert("RGB")),
+                                  use_det=False, use_cls=False)
+            if output is None or output.txts is None or output.scores is None:
+                return None
+            lines = [(text.strip(), float(score))
+                     for text, score in zip(output.txts, output.scores, strict=True)
+                     if text and text.strip()]
+            return lines or None
+        except Exception:  # noqa: BLE001
+            return None
+
     def decide(self, read: OcrRead | None) -> OcrDecision:
         """单路门控（见模块级 `decide_read`）。"""
         return decide_read(read, self.min_confidence)
