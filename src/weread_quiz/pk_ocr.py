@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 import numpy as np
 from PIL import Image
 
-from .blank import TextSpan, compose_stem, find_blank_lines
+from .blank import PLACEHOLDER, TextSpan, compose_stem, find_blank_lines
 from .buttons import option_bands
 from .errors import WqError
 from .ocr_core import (
@@ -21,6 +22,22 @@ from .ocr_core import (
 # 置信度门控阈值。低于它就回退图片路径。
 #
 DEFAULT_MIN_CONFIDENCE = 0.7
+
+# 整图 OCR 的放大倍数。
+#
+# RapidOCR 的检测模型把输入按 736 像素的上限缩放 —— 430×788 的整图会被
+# 缩到 0.93 倍，**紧跟在填空横线后面的孤立单字会整块漏检**：实测
+# 「区区 __ 心」在 1 倍下只读出「区区」，末尾的「心」没了，模型拿到的是
+# 残缺题干（实测置信度从 0.99 掉到 0.45）。
+#
+# 放大 2 倍后检测输入约 1.86 倍，实测同一张图识别耗时 0.58s → 0.75s
+# （+约 170ms），**一次调用就读全** —— 比再补一次题干带 OCR（约 1.2s）
+# 划算。顺带把 08:27 那局第 1 题的选项置信度从 0.66 提到 0.96（当时低于
+# 0.7 阈值，只能蒙题）。
+_WHOLE_FRAME_SCALE = 2
+
+# OCR 把画出来的填空横线读成下划线时的归一化。
+_UNDERSCORE_RE = re.compile(r"[_＿]+")
 
 # 题干区要剔除的非题目文字。
 #
@@ -66,6 +83,16 @@ def _is_progress(text: str) -> bool:
     return any(pattern.search(stripped) for pattern in _PROGRESS_PATTERNS)
 
 
+def _normalize_blank(text: str) -> str:
+    """把 OCR 读出来的下划线换成统一的填空占位符。
+
+    放大识别后，横线常常被并进文字框里读成「区区_心」—— 模型看到的是
+    一个真下划线，不是这套系统用的「____」占位符。统一换掉，题干格式
+    才跟其它题一致。
+    """
+    return _UNDERSCORE_RE.sub(PLACEHOLDER, text)
+
+
 class RapidOcrReader(RapidOcrEngine):
     """PK 的 RapidOCR 读取器。"""
 
@@ -77,10 +104,26 @@ class RapidOcrReader(RapidOcrEngine):
         bands = self._bands(image)
         if not bands:
             return None
-        result = self._engine_run(image)
+        result = self._engine_run_scaled(image)
         if result is None:
             return None
         return self._map_lines(result, bands, stem_from_bands=True, image=image)
+
+    def _engine_run_scaled(self, image: Image.Image):
+        """放大后识别，文字框坐标折回原图。
+
+        放大是为了让检测模型看得见**紧跟在横线后面的孤立单字**（见
+        _WHOLE_FRAME_SCALE）。坐标折回原图后，下游的几何判据一个都不用改。
+        """
+        if _WHOLE_FRAME_SCALE == 1:
+            return self._engine_run(image)
+        scaled = image.resize(
+            (image.width * _WHOLE_FRAME_SCALE, image.height * _WHOLE_FRAME_SCALE), Image.LANCZOS)
+        result = self._engine_run(scaled)
+        if result is None:
+            return None
+        return [([(x / _WHOLE_FRAME_SCALE, y / _WHOLE_FRAME_SCALE) for x, y in box], text, score)
+                for box, text, score in result]
 
     def read_card_text(self, image: Image.Image) -> tuple[bool | None, str]:
         """保留公开二元接口；内部详细结果同时携带题号原文。"""
@@ -315,7 +358,9 @@ class RapidOcrReader(RapidOcrEngine):
                 # 只收答题卡内、首个按钮上方的文字；卡片外的比分和 VS 不属于正文。
                 if (stem_from_bands and _CARD_BAND[0] <= center_y < first_top
                         and not _is_noise(text)):
-                    stem_parts.append(span)
+                    # 填空横线被并进文字框时，OCR 会读出下划线 —— 换成
+                    # 统一占位符，别让模型看到一个真下划线。
+                    stem_parts.append(replace(span, text=_normalize_blank(span.text)))
 
         options = ["".join(part[2] for part in sorted(parts)) for parts in option_parts]
         confidences = [min((part[3] for part in parts), default=0.0) for parts in option_parts]

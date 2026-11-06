@@ -20,9 +20,9 @@ from .errors import (
 from pyautogui import FailSafeException
 
 from .screen import (
-    has_answer_reveal, has_rendered_stem, is_new_question, is_question_screen,
-    is_same_question, looks_like_question_template, progress_cache_mask,
-    progress_cache_changed,
+    has_answer_reveal, has_rendered_stem, has_score_row, is_new_question,
+    is_question_screen, is_same_question, looks_like_question_template,
+    progress_cache_mask, progress_cache_changed,
 )
 from .pk_budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT
 from .pk_number import parse_progress_text, read_question_number
@@ -67,12 +67,28 @@ _FEEDBACK_SAMPLE_OFFSETS = SAMPLE_OFFSETS
 # 正常情况慢 —— 立刻再抓一帧很可能还是过渡态。
 _SKIP_QUESTION_DELAY = 4.0
 
-_EXTRA_WAIT_MAX = 3.0
-
-# 揭示态等待预算，覆盖单题倒计时；非揭示转场另计短预算。
-_REVEAL_WAIT_MAX = 13.0
-
 _EXTRA_WAIT_STEP = 0.1
+
+# 答完一题后等下一题的预算（秒）。
+#
+# 题目页有 12 秒倒计时，对局要等**对手**也作答才推进 —— 对手慢的话，
+# 下一题可能十几秒后才出现。
+#
+# 以前答对时有"揭示态"（正确项高亮绿）撑着 13 秒预算，**答错时没有
+# 揭示态**，只剩固定 1 秒 + 3 秒 —— 正好卡在"下一题还没出现"那条线上：
+# 实测答错后下一题 4.5~6 秒后才出现，于是被当成"对局结束"提前收工。
+_ANSWERED_WAIT_MAX = 13.0
+
+# 「对局结束」判据要连续成立**两帧**才认。
+#
+# **不是"再等几秒确认"** —— 两帧之间只隔一次抓屏（约 0.13 秒）。加这一条
+# 只为挡单帧渲染 glitch：换题时若恰好抓到一张什么都没画的帧，不能就此
+# 收工。结算页是稳态，两帧必然都成立。
+_MATCH_END_FRAMES = 2
+
+# 确认「这真是结算页」的最短间隔。确认要跑一次本地 OCR（约 0.5 秒），
+# 别在每一轮轮询里都做一遍。
+_SETTLE_CHECK_INTERVAL = 1.0
 
 # 等待答题界面（第一题）的轮询间隔。这个**仍在用** —— 那时候还没有
 # 当前题可比对，必须靠帧稳定判据确认界面渲染完成。
@@ -1255,11 +1271,42 @@ def answer_one_question(
                       recorder)
 
 
+def _is_settlement_page(image, ocr) -> bool:
+    """这一帧是不是结算页 —— 读结算页特有的字样（「获得积分」等）。
+
+    卡片没了、比分行也没了之后，只能靠读字来分辨「真的结束了」和
+    「换题转场中」：转场时页面读不出这些字。
+    """
+    from .result import is_settlement_page
+
+    return is_settlement_page(image, ocr)
+
+
+def _looks_like_match_end(has_buttons: bool, card: bool | None,
+                           score_row: bool) -> bool:
+    """这一帧像不像"对局已经结束"（结算页）。
+
+    三条都要满足：**没有选项按钮**、**答题卡片不在了**、**比分行也不在了**。
+
+    - 只有「没有按钮」不够：答错时按钮被染成红色，青色边框检测不到，
+      但对局还在继续（实测就是这么把 PK 提前收工的）。
+    - 只有「卡片不在了」也不够：**换题转场时卡片同样会淡出消失**（实测
+      2026-11-06 那局就在转场时被误判成结算页）。
+    - 比分行在卡片**上方**，不属于卡片：转场时它不动，结算页上整条没有。
+    """
+    if has_buttons or score_row:
+        return False
+    # 模板判否才算卡片不在；判不出来（None）时按还在处理 —— 宁可多等
+    # 一会儿，也不能把还在答题的界面当成结算页。
+    return card is False
+
+
 def wait_for_next_question(region, current_image, watch: "Stopwatch | None" = None, *,
                            capture_context: PKCaptureContext | None = None,
                            delay: float | None = None,
-                           feedback: AnswerFeedback | None = None):
-    """固定延迟后补等非揭示态的新题；揭示态使用独立长预算，返回 (截图, 可选答案)。"""
+                           feedback: AnswerFeedback | None = None,
+                           ocr=None, recorder=None):
+    """固定延迟后补等新题；答后等待覆盖整个题目窗口，返回 (截图, 可选答案)。"""
     if capture_context is not None:
         capture_context.reset()
     wait_seconds = _NEXT_QUESTION_DELAY if delay is None else delay
@@ -1281,13 +1328,19 @@ def wait_for_next_question(region, current_image, watch: "Stopwatch | None" = No
         # 首帧就是揭示态 —— 这时没有"进入"的转变可记，但必须留痕，
         # 否则日志里看不出这一轮是在揭示态里度过的。
         watch.mark("等下一题:处于揭示态")
+    has_buttons = is_question_screen(candidate)
+    card = looks_like_question_template(candidate)
+    score_row = has_score_row(candidate)
     # 记下**最后一张还带着答题卡片**的画面：结算页上没有比分，
     # 最终比分只在这张画面上（对局结束那一轮最要紧）。
-    last_frame = candidate if (revealed or is_question_screen(candidate)) else None
+    last_frame = candidate if (revealed or has_buttons or card is True) else None
+    # 「对局结束」判据已经连续成立的帧数。
+    end_frames = 0
+    # 上一次确认结算页的时刻（确认要花一次 OCR，别连着做）。
+    settle_checked_at = 0.0
     while not _is_next_question_ready(candidate, current_image):
         abort.check()
-        budget = _REVEAL_WAIT_MAX if revealed else _EXTRA_WAIT_MAX
-        if phase_waited >= budget:
+        if phase_waited >= _ANSWERED_WAIT_MAX:
             break
         time.sleep(_EXTRA_WAIT_STEP)
         phase_waited += _EXTRA_WAIT_STEP
@@ -1297,22 +1350,48 @@ def wait_for_next_question(region, current_image, watch: "Stopwatch | None" = No
         if feedback is not None:
             feedback.observe(candidate)
         now_revealed = has_answer_reveal(candidate)
-        # 揭示态和答题态都还有卡片在 —— 只有结算页没有。
-        if now_revealed or is_question_screen(candidate):
+        has_buttons = is_question_screen(candidate)
+        card = looks_like_question_template(candidate)
+        score_row = has_score_row(candidate)
+        # 揭示态和答题态都还有卡片在 —— 只有结算页没有。答错时按钮
+        # 染红了检测不到，但卡片还在，那张画面照样留着判比分。
+        if now_revealed or has_buttons or card is True:
             last_frame = candidate
-        # 揭示态的出现和消失都换一次预算：出现是因为要等倒计时走完
-        # （长预算），消失是因为回到普通渲染节奏（短预算）。
         if now_revealed != revealed:
             revealed = not revealed
-            phase_waited = 0.0
             if watch:
                 watch.mark(f"等下一题:{'进入' if revealed else '离开'}揭示态")
+        if _looks_like_match_end(has_buttons, card, score_row):
+            end_frames += 1
+            if end_frames == 1:
+                # 疑似到了结算页 —— 留一张证据，真出问题时能回看。
+                safe_log(recorder, "等下一题：卡片和比分行都不见了，疑似结算页")
+                if recorder is not None:
+                    try:
+                        recorder.shot("match_end_probe", image=candidate)
+                    except Exception as exc:  # noqa: BLE001 - 留证不能影响答题
+                        safe_log(recorder, f"结算页探针留证失败（{type(exc).__name__}）")
+            if end_frames < _MATCH_END_FRAMES:
+                continue
+            # 卡片没了、比分行也没了 —— 到底是不是结算页，**读页面上才有的
+            # 字**才算数：换题转场时卡片淡出，页面读不出「获得积分」。
+            now = time.monotonic()
+            if now - settle_checked_at < _SETTLE_CHECK_INTERVAL:
+                continue
+            settle_checked_at = now
+            if _is_settlement_page(candidate, ocr):
+                if watch:
+                    watch.mark("等下一题:结算页")
+                break
+        else:
+            end_frames = 0
 
     if watch:
         watch.mark(f"等下一题(固定{wait_seconds:.2f}s"
                    + (f" + 补等{total_waited:.1f}s)" if total_waited else ")"))
     if not is_question_screen(candidate):
-        # 补等到底还是**没有按钮** → 对局真的结束了（结算页）。
+        # 补等到底还是**没有按钮**。答错时按钮变红、检测不到青色边框，
+        # 这一段不能当成"对局结束" —— 卡片还在就是对局还在继续。
         if watch:
             watch.mark("等下一题:无按钮")
         if capture_context is not None:
@@ -1459,7 +1538,7 @@ def run_pk(
             delay = max(delay, _SKIP_QUESTION_DELAY)
         current, question = wait_for_next_question(
             region, current, watch=watch, capture_context=capture_context, delay=delay,
-            feedback=feedback,
+            feedback=feedback, ocr=ocr, recorder=recorder,
         )
         feedback.finish(result, recorder=recorder, verbose=False,
                         label=f"第 {ui_number or question_no} 题", terminal=current is None)
@@ -1479,7 +1558,7 @@ def run_pk(
             if not skipped and len(report.questions) < 3:
                 report.outcome = "interrupted"
                 report.error = (
-                    f"处理完第 {len(report.questions)} 轮后 {delay + _EXTRA_WAIT_MAX:.1f} 秒内"
+                    f"处理完第 {len(report.questions)} 轮后 {delay + _ANSWERED_WAIT_MAX:.1f} 秒内"
                     "没有出现下一题，对局可能已中断（网络掉线、对手退出等）"
                 )
             _read_final(region, report, vision, recorder, verbose,

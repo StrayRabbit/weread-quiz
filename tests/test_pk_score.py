@@ -76,6 +76,7 @@ def test_wait_keeps_the_last_card_frame_for_the_score(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", grab)
     monkeypatch.setattr(pk, "has_answer_reveal", lambda image: False)
     monkeypatch.setattr(pk, "is_question_screen", lambda image: image is card)
+    monkeypatch.setattr(pk, "has_score_row", lambda image: False)
     monkeypatch.setattr(pk, "is_new_question", lambda a, b: False)
     context = pk.PKCaptureContext()
     image, _ = pk.wait_for_next_question(None, object(), delay=0,

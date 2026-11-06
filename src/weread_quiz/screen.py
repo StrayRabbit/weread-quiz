@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .buttons import find_option_buttons
+from .buttons import cyan_row_counts, find_option_buttons
 from .errors import WqError
 
 # 题干所在的纵向区间。选项区不能算进去 —— 按钮动画噪声太大。
@@ -118,6 +118,31 @@ def is_question_screen(image: Image.Image) -> bool:
         return len(find_option_buttons(image)) >= 2
     except WqError:
         return False
+
+
+# 比分行（「头像 0 VS 0 头像」）所在的纵向区间。它在答题卡片**上方**，
+# 不属于卡片。
+#
+# 换题转场时答题卡片会淡出，卡片模板随之失配 —— 但比分行不动。用它
+# 当「对局还在不在」的判据：结算页上整条都没有。
+_SCORE_ROW_BAND = (115, 190)
+
+# 比分面板的上、下边框是一整行青色（实测题面峰值恒为 312）。结算页那一
+# 带最宽的一行只有 176 —— 那是称号六边形的边。阈值卡在中间。
+_SCORE_ROW_MIN_PEAK = 240
+
+
+def has_score_row(image: Image.Image) -> bool:
+    """比分行还在不在。
+
+    用「某一行的青色像素够多」来认，不认具体形状 —— 比分面板是圆角
+    矩形，上下边框是两条整行青色，宽度和页面一致。
+    """
+    counts = cyan_row_counts(image, top=_SCORE_ROW_BAND[0],
+                              bottom=_SCORE_ROW_BAND[1])
+    if counts.size == 0:
+        return False
+    return bool(counts.max() >= _SCORE_ROW_MIN_PEAK)
 
 
 _STEM_TEXT_BAND = (296, 360)

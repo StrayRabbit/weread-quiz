@@ -52,7 +52,8 @@ def reader(monkeypatch):
 
 def test_whole_frame_keeps_missing_middle_slot(reader, monkeypatch):
     rows = [row("第6题·共10题", 278), row("题目", 320), row("甲", 402), row("丙", 562)]
-    monkeypatch.setattr(reader, "_engine_run", lambda image: rows)
+    # _engine_run_scaled 返回的坐标已经折回原图 —— 这里只关心映射逻辑。
+    monkeypatch.setattr(reader, "_engine_run_scaled", lambda image: rows)
     read = reader.read(frame())
     assert read.options == ["甲", "", "丙"]
     assert read.confidences == [0.99, 0.0, 0.99]
@@ -63,7 +64,7 @@ def test_whole_frame_keeps_missing_middle_slot(reader, monkeypatch):
 def test_multiple_lines_in_one_button_are_one_option(reader, monkeypatch):
     rows = [row("题目", 320), row("下行", 408), row("丙", 562),
             row("上行", 390), row("乙", 482)]
-    monkeypatch.setattr(reader, "_engine_run", lambda image: rows)
+    monkeypatch.setattr(reader, "_engine_run_scaled", lambda image: rows)
     read = reader.read(frame())
     assert read.options == ["上行下行", "乙", "丙"]
     assert len(read.confidences) == 3

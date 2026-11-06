@@ -48,6 +48,16 @@ def test_stroke_inside_text_box_is_not_a_blank():
     assert find_blank_lines(image, (248, 380), spans) == []
 
 
+def test_blank_overlapping_text_box_margin_is_still_a_blank():
+    """OCR 的文字框比字形宽几个像素 —— 紧跟文字的填空线蹭上这点余量，
+    仍要认成填空线，不能当成字的横笔（实测「襟江带 __」就是这样丢的）。"""
+    image = scene([(233, 258, 322)])
+    spans = [span(167, 236, 300, 326, "襟江带")]
+    blanks = find_blank_lines(image, (248, 380), spans)
+    assert len(blanks) == 1
+    assert (blanks[0].x0, blanks[0].x1) == (233, 257)
+
+
 def test_line_with_ink_above_is_not_a_blank():
     """上下还有笔画 —— 它是更大图形的一部分。"""
     image = scene([(100, 140, 300), (100, 140, 292)])

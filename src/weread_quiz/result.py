@@ -36,6 +36,34 @@ def verdict_from_score(score) -> str:
     return "平局"
 
 
+# 结算页**特有**的字样。
+#
+# 判「对局结束了」不能只看「答题卡片不见了」—— 换题转场时卡片同样会淡出
+# 消失（实测 2026-11-06 那局就在转场时误判过一次）。结算页上才有的这些
+# 字才是可靠证据。
+_SETTLEMENT_MARKERS = ("获得积分", "再来一局", "炫耀一下", "查看排行榜")
+
+
+def is_settlement_page(image: Image.Image, ocr) -> bool:
+    """这一帧是不是结算页。
+
+    读的是结算页特有的字样。读不出来（引擎不可用、页面空白）就当不是 ——
+    宁可多等一会儿，也不能把还在答题的界面当成结算页。
+    """
+    reader = getattr(ocr, "_engine_run", None)
+    if reader is None:
+        return False
+    try:
+        rows = reader(image) or []
+    except Exception:  # noqa: BLE001 - 读不出当"不是结算页"
+        return False
+    for _box, text, _confidence in rows:
+        cleaned = re.sub(r"\s+", "", str(text))
+        if any(marker in cleaned for marker in _SETTLEMENT_MARKERS):
+            return True
+    return False
+
+
 def read_result(image: Image.Image, vision=None, *, ocr=None, recorder=None,
                 score=None) -> dict:
     """返回 {result, title, score}；本地证据可靠时不再请求图片模型。

@@ -37,9 +37,13 @@ _GAP_ROWS = 8
 _GAP_TOL = 2
 # 上下合计超过这么多亮像素，就不是独立的线。
 _MAX_INK = 2
-# 横线与文字框横向重叠这么多像素才算「压着字」—— 汉字的横笔必然在
-# 自己的框里，而填空线往往紧贴文字（差 1~2 像素），不能算重叠。
-_OVERLAP_MIN = 2
+# 横线与文字框横向重叠这么多**比例**，才算「压在字上」—— 汉字的横笔必然
+# **整个**在自己的框里。
+#
+# **不能用绝对像素数**：OCR 的文字框比字形宽几个像素，紧跟在字后面的
+# 填空线会蹭上那点余量被误伤（实测 2 倍识别下「襟江带 __」的横线就是
+# 这样丢的：框宽出 5 像素，横线被当成了字的横笔）。
+_OVERLAP_RATIO = 0.5
 # 亮像素：接近白色，且不是高饱和的彩色（卡片边框是青色）。
 _LIGHT_MIN = 170
 _LIGHT_SPREAD = 70
@@ -212,11 +216,12 @@ def _merge_runs(runs) -> list[tuple[int, int, int, int]]:
 
 def _touches_text(spans, center: float, x0: float, x1: float, near_y: int) -> bool:
     """附近有文字框且横向压着它 —— 这是字的横笔，不是填空线。"""
+    length = max(1, x1 - x0)
     for span in spans:
         if abs(span.center_y - center) > near_y:
             continue
         overlap = min(x1, span.x1) - max(x0, span.x0)
-        if overlap >= _OVERLAP_MIN:
+        if overlap >= length * _OVERLAP_RATIO:
             return True
     return False
 

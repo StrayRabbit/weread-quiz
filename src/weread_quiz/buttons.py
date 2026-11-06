@@ -32,13 +32,18 @@ _MIN_OPTIONS = 2
 _MAX_OPTIONS = 8
 
 
-def find_cyan_bands(image: Image.Image, top: int = 0, bottom: int | None = None) -> list[tuple[int, int]]:
-    """找出横向的青色边框条，返回 [(y_top, y_bottom), ...]。"""
+def cyan_row_counts(image: Image.Image, top: int = 0,
+                    bottom: int | None = None) -> np.ndarray:
+    """每一行有多少青色像素（与 find_cyan_bands 用同一套判据）。
+
+    行号从 top 开始算。别的模块要判断「某个横带上有没有一整行青色」
+    时用它，免得各写一套青色阈值。
+    """
     height = image.size[1]
     end = height if bottom is None else min(bottom, height)
     start = max(0, min(top, end))
     if end <= start:
-        return []
+        return np.zeros(0, dtype=int)
     # 只把搜索区间转成数组。convert+astype 整图是这一步的主要开销。
     crop = image.crop((0, start, image.size[0], end))
     arr = np.asarray(crop.convert("RGB")).astype(int)
@@ -48,8 +53,17 @@ def find_cyan_bands(image: Image.Image, top: int = 0, bottom: int | None = None)
         & (blue > _CYAN_MIN_BLUE)
         & (green > _CYAN_MIN_GREEN)
     )
+    return cyan.sum(axis=1)
 
-    row_counts = cyan.sum(axis=1)
+
+def find_cyan_bands(image: Image.Image, top: int = 0, bottom: int | None = None) -> list[tuple[int, int]]:
+    """找出横向的青色边框条，返回 [(y_top, y_bottom), ...]。"""
+    height = image.size[1]
+    end = height if bottom is None else min(bottom, height)
+    start = max(0, min(top, end))
+    if end <= start:
+        return []
+    row_counts = cyan_row_counts(image, top=start, bottom=end)
     bands: list[tuple[int, int]] = []
     begin: int | None = None
     for offset, count in enumerate(row_counts):
