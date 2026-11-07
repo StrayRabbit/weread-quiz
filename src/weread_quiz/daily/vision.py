@@ -28,36 +28,14 @@ DAILY_TOTAL_QUESTIONS = 12
 DAILY_VISION_TIMEOUT = 11.5
 DAILY_VISION_RETRIES = 0
 
-# 文本路径（OCR 快路径）与图片回退之间的预算切分。
-#
-# 文本路径慢一次要吃掉 5 秒，而识别总预算 9 秒 —— 回退若被饿死到
-# 2.5 秒，模型慢一点就又超时，两条路同时空，只能蒙答（2026-11-02
-# 实测：第 5 题「中东地区石油出口量…占世界的百分比」就是这样错的）。
-#
-# 图片启动门槛与 PK 的 _IMAGE_PATH_MIN_BUDGET 对齐；文本路径还要额外
-# 留出超时退出余量，避免 HTTP 超时稍晚返回就跌破图片启动门槛。
+# 图片路径的最小启动余量。仅用于本地判否或文本提前无效时的回退，
+# 不再从正常文本请求的预算里预扣。
 FALLBACK_RESERVE_SECONDS = 3.5
-_TEXT_TIMEOUT_EXIT_MARGIN_SECONDS = 0.3
 
 
 def text_path_deadline(deadline: float, now: float, timeout: float) -> float:
-    """文本路径的截止时刻 —— 必须给图片回退留出预算。
-
-    剩余预算不够两条路分时全给文本路径：它更快更便宜（输入 token 只有
-    图片路径的六分之一），而此时已经没有回退的余地。
-
-    识别预算已经耗光（deadline 早于 now）时，文本路径仍给自己一份
-    独立的短预算 —— 预读的钱已经付了，文本请求又便宜又快；而图片
-    回退**不**因此延长，它仍受原 deadline 约束。
-    """
-    remaining = deadline - now
-    if remaining <= 0:
-        return now + timeout
-    budget = min(timeout, remaining - FALLBACK_RESERVE_SECONDS
-                 - _TEXT_TIMEOUT_EXIT_MARGIN_SECONDS)
-    if budget <= 0:
-        budget = remaining
-    return now + budget
+    """文本使用剩余预算并遵守单次上限；原预算过期时不续期。"""
+    return min(deadline, now + timeout)
 
 
 @dataclass

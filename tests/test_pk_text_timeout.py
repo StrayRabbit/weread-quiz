@@ -1,9 +1,4 @@
-"""PK 文本路径上限可配置（PK_TEXT_TIMEOUT）回归。
-
-慢模型（实测 MiniMax-M3.1-Flash 文本路径 3.2~4.6 秒、偶尔超过 5 秒）
-会被写死的 5 秒上限切掉，切掉后整图路径只剩 4 秒 —— 两条路都超时
-就只剩蒙答。这个上限必须能在 .env 里调。
-"""
+"""PK 文本上限可配置；默认用足剩余预算，显式较短上限仍然生效。"""
 import importlib
 from types import SimpleNamespace
 
@@ -42,9 +37,9 @@ def env_root(monkeypatch, tmp_path):
 
 
 def test_default_text_timeout(monkeypatch, env_root):
-    """没配 = 默认 5 秒。"""
+    """默认 12 秒上限，实际请求仍受截图剩余预算约束。"""
     monkeypatch.delenv("PK_TEXT_TIMEOUT", raising=False)
-    assert env_root.AppConfig.from_env().pk_text_timeout == _TEXT_PATH_TIMEOUT == 5.0
+    assert env_root.AppConfig.from_env().pk_text_timeout == _TEXT_PATH_TIMEOUT == 12.0
 
 
 def test_text_timeout_is_read_from_env(monkeypatch, env_root):

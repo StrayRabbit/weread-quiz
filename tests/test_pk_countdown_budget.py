@@ -64,7 +64,7 @@ def scene(monkeypatch):
     return state, image
 
 
-@pytest.mark.parametrize("seconds,captured,expected_deadline", [(12, 999.0, 1009.5), (5, 999.0, 1002.5), (None, 1000.0, 1006.0)])
+@pytest.mark.parametrize("seconds,captured,expected_deadline", [(12, 999.0, 1010.2), (5, 999.0, 1003.2), (None, 1000.0, 1006.0)])
 def test_preread_budget_accounts_for_capture_age(scene, seconds, captured, expected_deadline):
     state, image = scene
     seen = []
@@ -82,7 +82,7 @@ def test_countdown_with_no_remaining_budget_does_not_call_model(scene):
     def answer(*a, **kw):
         pytest.fail("没有时间时不能调用模型")
     result = pk.answer_one_question(None, SimpleNamespace(answer_from_ocr_read=answer),
-        image=image, captured_at=999.0, ocr_read=read(2), verbose=False, guess_on_failure=False)
+        image=image, captured_at=998.0, ocr_read=read(2), verbose=False, guess_on_failure=False)
     assert result["skipped"] is True
     assert state["clicks"] == 0
 
@@ -103,9 +103,9 @@ def test_no_image_model_uses_countdown_budget_for_seven_second_answer(scene):
             seen.append(kw["deadline"])
             state["now"] += 7.0
             return 1
-    hybrid = HybridQuestionReader(Model(), Ocr(), verbose=False, text_timeout=8.0)
+    hybrid = HybridQuestionReader(Model(), Ocr(), verbose=False, text_timeout=12.0)
     result = pk.answer_one_question(None, hybrid, image=image, captured_at=999.0, verbose=False)
-    assert seen == [1009.5]
+    assert seen == [1010.2]
     assert result["guessed"] is False
     assert state["clicks"] == 1
 
@@ -113,7 +113,7 @@ def test_no_image_model_uses_countdown_budget_for_seven_second_answer(scene):
 def test_timer_deadline_still_applies_to_local_model_answer(scene):
     state, image = scene
     def answer(item, **kw):
-        state["now"] = 1011.0
+        state["now"] = 1011.3
         return VisionQuestion(stem=item.stem, options=item.options, answer_index=1, screen="question", local_read=True)
     result = pk.answer_one_question(None, SimpleNamespace(answer_from_ocr_read=answer),
         image=image, captured_at=1000.0, ocr_read=read(12), verbose=False, guess_on_failure=False)

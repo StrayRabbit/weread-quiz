@@ -289,24 +289,14 @@ class HybridQuestionReader:
 
     def _answer_from_text(self, read: OcrRead, *,
                           timeout: float | None = None, deadline: float | None = None) -> VisionQuestion | None:
-        """把 OCR 文本发给模型，文本阶段（含复核）共用限时，超时后允许图片接手。"""
-        supports_image = getattr(self._vision, "supports_image", True)
+        """文本使用可用预算；到时直接交给上层蒙答，仅提前无效结果可回退图片。"""
         started = time.monotonic()
-        limit = text_path_timeout(_text_timeout(timeout, self.text_timeout), deadline,
-                                  supports_image=supports_image)
+        limit = text_path_timeout(_text_timeout(timeout, self.text_timeout), deadline)
         if limit <= 0:
-            self._log("文本路径 跳过：剩余预算仅够图片回退")
-            return None
-        text_deadline = deadline
-        if supports_image and deadline is not None:
-            text_deadline = min(deadline, started + limit)
-        try:
-            return answer_from_read(self._vision, read, TEXT_PROMPT,
-                                    timeout=limit, deadline=text_deadline, log=self._log)
-        except RecognitionTimeout:
-            # 文本阶段到时不等于整题到时；图片仍使用原截止时间。
-            _check_deadline(deadline)
-            return None
+            raise RecognitionTimeout("deadline_exceeded")
+        text_deadline = min(deadline, started + limit) if deadline is not None else started + limit
+        return answer_from_read(self._vision, read, TEXT_PROMPT,
+                                timeout=limit, deadline=text_deadline, log=self._log)
 
     def __getattr__(self, name: str):
         """其余属性全部转给 VisionService（usage、read_result、close…）。"""

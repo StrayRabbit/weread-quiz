@@ -40,6 +40,8 @@ _STATES = {
     "nocard": (False, False, True),
     "blank": (False, False, False),
     "settlement": (False, False, False),
+    # 「再来一局」「炫耀一下」同样会被几何检测当成两个按钮。
+    "settlement_buttons": (True, False, False),
 }
 
 
@@ -75,9 +77,9 @@ def _install(monkeypatch, states):
     monkeypatch.setattr(pk, "has_answer_reveal", lambda _image: False)
     monkeypatch.setattr(pk, "is_new_question",
                         lambda _before, after: state_of(after) == "next")
-    # 结算页的确认靠读页面上才有的字；这里只让「settlement」状态读得到。
+    # 结算页的确认靠读页面上才有的字，只让两种结算状态读得到。
     monkeypatch.setattr(pk, "_is_settlement_page",
-                        lambda image, _ocr: state_of(image) == "settlement")
+                        lambda image, _ocr: state_of(image) in {"settlement", "settlement_buttons"})
     return frames
 
 
@@ -110,6 +112,52 @@ def test_settlement_page_ends_the_match(monkeypatch):
     _install(monkeypatch, ["settlement"])
     current, _ = pk.wait_for_next_question(None, _frame("question"), delay=0)
     assert current is None
+
+
+@pytest.mark.parametrize("states", [
+    ["settlement_buttons"],
+    ["blank", "settlement_buttons"],
+])
+def test_settlement_buttons_are_not_a_new_question(monkeypatch, clock, states):
+    """真实结算页有两个青色按钮、题干区也变了，仍须确认结算而非交给模型。"""
+    _install(monkeypatch, states)
+    monkeypatch.setattr(pk, "is_new_question", lambda _before, _after: True)
+    checked = []
+
+    def settlement(image, _ocr):
+        checked.append(image.info["state"])
+        return image.info["state"] == "settlement_buttons"
+
+    monkeypatch.setattr(pk, "_is_settlement_page", settlement)
+    current, _ = pk.wait_for_next_question(None, _frame("question"), delay=0)
+    assert current is None, "结算按钮不能触发第 11 题"
+    assert "settlement_buttons" in checked, "必须运行本地结算确认"
+    assert clock.now - 100.0 < 1.0, "已确认结算后不能等满题目窗口"
+
+
+@pytest.mark.parametrize("card", [True, None])
+def test_real_next_question_keeps_template_unavailable_fallback(monkeypatch, card):
+    _install(monkeypatch, ["next"])
+    monkeypatch.setattr(pk, "looks_like_question_template", lambda _image: card)
+    current, _ = pk.wait_for_next_question(None, _frame("question"), delay=0)
+    assert current is not None
+    assert current.info["state"] == "next"
+
+
+def test_unconfirmed_settlement_buttons_are_not_returned_on_timeout(monkeypatch, clock):
+    """OCR 暂时读不出结算字样时可以继续等，但不能到期后又交出伪下一题。"""
+    _install(monkeypatch, ["settlement_buttons"])
+    monkeypatch.setattr(pk, "is_new_question", lambda _before, _after: True)
+    monkeypatch.setattr(pk, "_is_settlement_page", lambda *_args: False)
+    current, _ = pk.wait_for_next_question(None, _frame("question"), delay=0)
+    assert current is None
+    assert clock.now - 100.0 >= pk._ANSWERED_WAIT_MAX - 0.1
+
+
+def test_unchanged_question_is_not_returned_on_timeout(monkeypatch, clock):
+    _install(monkeypatch, ["question"])
+    current, _ = pk.wait_for_next_question(None, _frame("question"), delay=0)
+    assert current is None, "到期后仍是原题，不得再尝试答一次"
 
 
 def test_wait_covers_the_whole_question_window(monkeypatch, clock):

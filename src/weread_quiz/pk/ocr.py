@@ -367,10 +367,10 @@ class RapidOcrReader(RapidOcrEngine):
         progress_text = "".join(text for _, _, text in sorted(progress_parts))
         # 题干按**画面上的阅读顺序**拼（先分行，行内从左到右），
         # 填空横线按位置补在中间。
-        stem = compose_stem(
-            stem_parts,
-            find_blank_lines(image, (_CARD_BAND[0], first_top), spans),
-        )
+        blanks = find_blank_lines(image, (_CARD_BAND[0], first_top), spans,
+                                  allow_embedded=True)
+        stem_parts, blanks = self._restore_embedded_blanks(image, stem_parts, blanks)
+        stem = compose_stem(stem_parts, blanks)
         if stem_from_bands and not stem:
             return None
         return OcrRead(
@@ -382,6 +382,48 @@ class RapidOcrReader(RapidOcrEngine):
             progress_text=progress_text,
             countdown_seconds=next(iter(countdowns)) if len(countdowns) == 1 else None,
         )
+
+    def _restore_embedded_blanks(self, image, spans, blanks):
+        """横线落在整行文字框内时，识别其左右片段，避免按字符数猜填空位置。"""
+        restored = []
+        kept_blanks = list(blanks)
+        for span in spans:
+            embedded = sorted(
+                (blank for blank in kept_blanks
+                 if span.x0 < blank.x0 and blank.x1 < span.x1
+                 and span.y0 <= blank.center_y <= span.y1),
+                key=lambda blank: blank.x0,
+            )
+            if not embedded:
+                restored.append(span)
+                continue
+            for blank in embedded:
+                kept_blanks.remove(blank)
+            if PLACEHOLDER in span.text:
+                restored.append(span)
+                continue
+            top = max(0, int(span.y0) - 4)
+            bottom = min(image.height, int(np.ceil(span.y1)) + 4)
+            starts = [max(0, int(span.x0) - 4)] + [blank.x1 + 1 for blank in embedded]
+            ends = [blank.x0 for blank in embedded] + [min(image.width, int(np.ceil(span.x1)) + 4)]
+            parts = []
+            for left, right in zip(starts, ends):
+                crop = image.crop((left, top, right, bottom))
+                result = self._engine_run_text(crop.resize(
+                    (crop.width * 2, crop.height * 2), Image.LANCZOS))
+                if (not result or len(result) != 1
+                        or not result[0][0].strip()
+                        or result[0][1] < self.min_confidence
+                        or _UNDERSCORE_RE.search(result[0][0])):
+                    break
+                parts.append(replace(span, x0=left, x1=right, text=result[0][0].strip()))
+            if len(parts) == len(starts):
+                restored.extend(parts)
+                kept_blanks.extend(embedded)
+            else:
+                # 补读必须完整成功；不把半截内容或猜测的位置写回题干。
+                restored.append(span)
+        return restored, kept_blanks
 
     def decide(self, read: OcrRead | None) -> OcrDecision:
         """PK 门控显式拒绝空槽；题号证据与选项完整性分开处理。"""

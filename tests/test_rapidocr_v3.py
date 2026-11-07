@@ -42,7 +42,28 @@ def test_engine_converts_v3_output_to_existing_rows():
     np.testing.assert_array_equal(rows[0][0], output.boxes[0])
     image, kwargs = stub.calls[0]
     assert image.shape == (50, 100, 3)
-    assert kwargs == {"use_cls": False}
+    assert kwargs == {"use_cls": False, "use_det": True}
+
+
+def test_detection_mode_is_restored_after_recognition_only():
+    """RapidOCR 3.x 会保留 use_det=False，下一次整图调用必须显式打开。"""
+    class StatefulEngine:
+        def __init__(self):
+            self.use_det = True
+
+        def __call__(self, image, **kwargs):
+            self.use_det = kwargs.get("use_det", self.use_det)
+            output = _output(("题目",))
+            if not self.use_det:
+                output.boxes = None
+            return output
+
+    reader = RapidOcrEngine()
+    reader._engine = StatefulEngine()
+    assert reader._engine_run_text(Image.new("RGB", (80, 30))) == [("题目", 0.99)]
+    rows = reader._engine_run(Image.new("RGB", (430, 788)))
+    assert rows is not None, "分段补读不能使后续整图 OCR 永久丢失文字框"
+    assert rows[0][1] == "题目"
 
 
 @pytest.mark.parametrize("output", [

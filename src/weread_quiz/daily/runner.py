@@ -32,26 +32,12 @@ from ..record import format_question_line
 from ..usage import PhaseTotals, Stopwatch, log_usage, safe_log, usage_since, usage_snapshot
 from ..vision import VisionQuestion, VisionService, _check_deadline
 
-# 单题识别的绝对预算、切分方式与图片路径下限。
-#
-# **数字与 PK 链路对齐**（pk_budget.py）：PK 的预算锚定界面倒计时
-# （12 秒减 1.5 秒点击预留 = 9.86 秒），daily 界面没有倒计时可读
-# （卡片顶部那个恒为「11」的圆是装饰，不是计时器），所以用固定值。
-#
-# 为什么必须这么宽：两条链路用的是**同一个模型服务**（同一份 .env），
-# 文本路径耗时中位 PK 约 1.05 秒、daily 约 1.3 秒，同一个量级 ——
-# 差别只在预算分配。PK 的 9.86 秒装得下「5 秒文本 + 3.5 秒图片」，
-# 而旧的 6.0 秒装不下：文本路径吃掉 3 秒后图片回退只剩 2.55 秒，
-# 而图片路径中位就要 2.4 秒 —— 一次慢请求必然两条路同时空，只能蒙答
-# （2026-11-02 实测：第 5 题「中东地区石油出口量…占世界的百分比」）。
+# daily 无可读取的倒计时，仍保留固定 9 秒识别预算。
+# 文本使用剩余预算，超时直接交点击前复核及蒙答，不预扣图片回退时间。
 _IDENTIFY_BUDGET_SECONDS = 9.0
-_TEXT_TIMEOUT = 5.0
+_TEXT_TIMEOUT = 9.0
 
-# 图片路径至少要剩这么多预算才值得试。
-#
-# 图片路径要把整张图编码后发给模型读，实测 1.5~3 秒。留 3.5 秒是
-# 「切掉慢的文本路径之后还够跑一次图片路径」的底线 —— 剩余不够就
-# 直接蒙答，别发一个注定超时的请求把时间白烧掉（与 PK 同判据）。
+# 仅本地判否或文本提前返回无效结果时考虑图片；余量不足则不发请求。
 _IMAGE_PATH_MIN_BUDGET = 3.5
 
 # 图龄超过这个值就**多问一次题号**，不是把答案作废。
@@ -231,9 +217,10 @@ def wait_for_question(cfg: DailyConfig, timeout: float | None = None, *,
 
 
 def _identify_question(cfg, image, context):
-    """当前题求答案：预读文本一次，失败或判否后仅走剩余预算的图片路径。"""
+    """可靠预读优先文本；文本到时直接蒙答，仅提前无效结果或本地判否可回退。"""
     anchor = context.confirmed_at if context.confirmed_at is not None else context.captured_at
     deadline = (anchor if anchor is not None else time.monotonic()) + _IDENTIFY_BUDGET_SECONDS
+    _check_deadline(deadline)
     safe_log(cfg.recorder, f"识别预算：总 {_IDENTIFY_BUDGET_SECONDS:g}s，"
              f"当前余量 {max(0.0, deadline - time.monotonic()):.2f}s"
              f"（文本上限 {_TEXT_TIMEOUT:g}s，图片下限 {_IMAGE_PATH_MIN_BUDGET:g}s）")
@@ -252,18 +239,18 @@ def _identify_question(cfg, image, context):
               and len(read.options) == len(find_option_buttons(image)))
     answer = getattr(cfg.vision, "answer_from_ocr_read", None)
     if usable and callable(answer):
-        # 本地预读允许独立的短请求；是否仍为同一题由点击前复核决定。
-        #
-        # 文本路径只能用「剩余预算减去回退保留」—— 它超时时图片回退
-        # 还得有预算可用，否则两条路同时空，只能蒙答。
         now = time.monotonic()
         text_deadline = text_path_deadline(deadline, now, _TEXT_TIMEOUT)
+        _check_deadline(text_deadline)
         try:
-            question = answer(read, timeout=_TEXT_TIMEOUT, deadline=text_deadline)
+            question = answer(read, timeout=text_deadline - now, deadline=text_deadline)
+        except RecognitionTimeout:
+            raise  # 文本到时直接交上层同题复核及蒙答，不再请求图片。
         except AnswerUnavailable as exc:
             safe_log(cfg.recorder, f"OCR 文本路径失败：{exc}")
             question = None
-        if question is not None and time.monotonic() < text_deadline:
+        _check_deadline(text_deadline)
+        if question is not None:
             return question
     _check_deadline(deadline)
     # 图片路径值不值得试：**看还剩多少预算**。不够就别发 —— 发了也只是

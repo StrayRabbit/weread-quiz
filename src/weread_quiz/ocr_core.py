@@ -219,7 +219,9 @@ class RapidOcrEngine:
         if not self.warmup():
             return None
         try:
-            output = self._engine(np.asarray(image.convert("RGB")), **_ENGINE_KWARGS)
+            # RapidOCR 会保留识别模式的 use_det=False，整图入口必须显式恢复检测。
+            output = self._engine(np.asarray(image.convert("RGB")), use_det=True,
+                                  **_ENGINE_KWARGS)
             if output.boxes is None or output.txts is None or output.scores is None:
                 return None
             # RapidOCR 3.x 返回结果对象；下游仍使用 (box, text, score) 行。

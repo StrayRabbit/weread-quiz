@@ -1,4 +1,4 @@
-"""PK 文本路径限时后，图片路径兜底的调用链回归。"""
+"""PK 文本提前返回无效结果时，图片路径兜底的调用链回归。"""
 
 from __future__ import annotations
 
@@ -126,8 +126,8 @@ def test_no_image_path_when_budget_is_almost_gone(scene):
     """剩余预算不够跑图片路径 → 别试，直接蒙答。"""
     clock, clicked = scene
     vision = Vision(clock, text_cost=0.5)
-    # 截图是 8 秒前拍的（等待阶段磨蹭过），倒计时 12 秒 → 预算到
-    # 1010.5 秒，文本路径跑完后只剩 2 秒 —— 跑不动图片路径。
+    # 截图是 8 秒前拍的，倒计时 12 秒 → 截止 1011.2 秒；
+    # 文本提前失败后剩余 2.7 秒，不足以运行图片路径。
     clock.now = 1008.0
 
     result = pk.answer_one_question(
@@ -140,8 +140,8 @@ def test_no_image_path_when_budget_is_almost_gone(scene):
     assert len(clicked) == 1
 
 
-def test_text_path_timeout_is_capped(scene):
-    """文本路径单次最多 _TEXT_PATH_TIMEOUT 秒 —— 剩下的留给图片路径。"""
+def test_text_path_timeout_uses_remaining_budget(scene):
+    """默认上限足够长时，文本请求用足扣除点击预留后的剩余预算。"""
     clock, _ = scene
     vision = Vision(clock)
 
@@ -150,15 +150,15 @@ def test_text_path_timeout_is_capped(scene):
         ocr_read=_read(), verbose=False,
     )
 
-    assert vision.text_calls == [pk._TEXT_PATH_TIMEOUT]
+    assert vision.text_calls == [pytest.approx(11.2)]
 
 
 @pytest.mark.allow_network
-def test_timed_out_text_request_falls_through_to_image_request():
-    """真实 HTTP 层：文本请求超时返回 None（不当异常），图片请求接手。
+def test_raw_vision_http_timeout_keeps_later_calls_available():
+    """底层 HTTP 单次超时不关闭客户端，调用方仍能发后续请求。
 
-    这是「文本路径慢 → 图片路径兜底」能成立的前提：超时的文本请求
-    不能把异常抛到上层，也不能把 deadline 耗光。
+    此处直接测试 VisionService 的兼容接口；PK 是否回退由上层决定，
+    文本阶段到时不回退的调用链另由 test_pk_fallback_reserve 覆盖。
     """
     import http.server
     import json

@@ -138,6 +138,42 @@ def test_no_tiebreak_notice_in_a_normal_game(monkeypatch, capsys):
     assert "之后界面仍出题" not in capsys.readouterr().out
 
 
+def test_settlement_with_buttons_does_not_start_eleventh_answer(monkeypatch, capsys):
+    """跑真实换题等待逻辑：结算双按钮不能产生加时提示或第 11 次答题调用。"""
+    wait_next = pk.wait_for_next_question
+    game = FakeGame(progress_plan(10), answers_after=10)
+    settlement = Image.new("RGB", (430, 788))
+    now = [100.0]
+    checks = []
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(pk.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pk.time, "sleep", sleep)
+    monkeypatch.setattr(pk, "grab_screen",
+                        lambda _region: settlement if game.index >= 9 else game.image)
+    monkeypatch.setattr(pk, "is_question_screen", lambda _image: True)
+    monkeypatch.setattr(pk, "looks_like_question_template",
+                        lambda image: image is not settlement)
+    monkeypatch.setattr(pk, "has_score_row", lambda image: image is not settlement)
+    monkeypatch.setattr(pk, "has_answer_reveal", lambda _image: False)
+    monkeypatch.setattr(pk, "is_new_question", lambda *_args: True)
+
+    def confirm(image, _ocr):
+        checks.append(image)
+        return image is settlement
+
+    monkeypatch.setattr(pk, "_is_settlement_page", confirm)
+    game.next_question = wait_next
+    report = run(monkeypatch, game, verbose=True)
+    assert report.answered == 10
+    assert game.index == 9
+    assert game.finals == 1
+    assert checks
+    assert "之后界面仍出题" not in capsys.readouterr().out
+
+
 def test_round_cap_reached_while_still_answering(monkeypatch):
     """轮次用尽时界面还是答题页 —— 要说明对局没结束，别当成答完了。"""
     game = FakeGame(progress_plan(20), answers_after=20)

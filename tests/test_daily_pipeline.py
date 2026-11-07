@@ -7,7 +7,7 @@ from PIL import Image
 from weread_quiz.daily import runner as daily
 from weread_quiz.daily.hybrid import DailyHybridReader
 from weread_quiz.daily.ocr import DailyOcrRead, DailyOcrReader
-from weread_quiz.daily.vision import FALLBACK_RESERVE_SECONDS, text_path_deadline
+from weread_quiz.daily.vision import text_path_deadline
 from weread_quiz.errors import AnswerUnavailable, OcrRejected, RecognitionTimeout
 from weread_quiz.models import Rect
 from weread_quiz.vision import VisionQuestion
@@ -138,8 +138,8 @@ def test_hybrid_does_not_cascade_after_absolute_deadline(monkeypatch):
     assert [c[0] for c in vision.calls] == ["text"]
 
 
-def test_hybrid_cascade_leaves_fallback_reserve(monkeypatch):
-    """混合级联里的文本路径同样要让出回退预算。"""
+def test_hybrid_uses_all_remaining_text_budget_without_image_after_timeout(monkeypatch):
+    """可靠 OCR 的文本请求用足剩余预算，耗尽后不再请求图片。"""
     clock = Clock()
     monkeypatch.setattr("weread_quiz.daily.hybrid.time.monotonic", clock)
     vision = Vision()
@@ -151,11 +151,10 @@ def test_hybrid_cascade_leaves_fallback_reserve(monkeypatch):
 
     vision.answer_from_text = burning_text
     reader = DailyHybridReader(vision, SlowOcr(read(), clock), verbose=False)
-    reader.read_question(frame(), deadline=106.0)
-    assert [c[0] for c in vision.calls] == ["text", "image"]
-    text_deadline = vision.calls[0][2]
-    image_deadline = vision.calls[1][2]
-    assert image_deadline - text_deadline >= FALLBACK_RESERVE_SECONDS
+    with pytest.raises(RecognitionTimeout):
+        reader.read_question(frame(), deadline=106.0)
+    assert vision.calls == [("text", pytest.approx(5.5), 106.0)]
+    assert clock.now == 106.0
 
 
 @pytest.fixture
@@ -213,7 +212,7 @@ def test_preread_is_used_once_during_answer(desktop):
     result = daily.answer_one_question(cfg, image, question, 1, capture_context=context)
     assert ocr.calls == calls_before
     assert [c[0] for c in vision.calls] == ["text"]
-    assert vision.calls[0][1] == 5.0
+    assert vision.calls[0][1] == 9.0
     assert result["answer"] == 1 and not result["guessed"]
     assert len(desktop[1]) == 1
 
@@ -247,8 +246,8 @@ def test_text_failure_uses_remaining_budget_for_image(desktop, clock):
     result = daily.answer_one_question(config(reader), desktop[0], None, 1,
                                        capture_context=context)
     assert [c[0] for c in vision.calls] == ["text", "image"]
-    # 识别总预算 9 秒（锚点 100.0 → 109.0），文本路径上限 5 秒。
-    assert vision.calls[0][2] == 105.0
+    # 文本使用原识别总预算；提前无效返回时，图片仍共享截止 109.0。
+    assert vision.calls[0][2] == 109.0
     assert vision.calls[1][2] == 109.0
     assert result["answer"] == 2
 
@@ -290,12 +289,8 @@ def test_slow_text_request_still_gets_answered(desktop, clock):
     assert result["answer"] == 1 and not result["guessed"]
 
 
-def test_text_path_leaves_fallback_reserve(desktop, clock):
-    """文本路径烧完预算后，图片回退必须还拿得到保留预算。
-
-    2026-11-02 实测：文本路径超时吃掉 3 秒后回退只剩 2.5 秒，模型慢
-    一点就两条路同时空 → 蒙答（第 5 题「中东地区石油出口量…百分比」）。
-    """
+def test_text_timeout_guesses_without_image_after_same_question_validation(desktop, clock, monkeypatch):
+    """文本烧完 9 秒预算后，仅在同题复核通过时蒙答。"""
     vision = Vision()
 
     def burning_text(*args, **kwargs):
@@ -305,59 +300,49 @@ def test_text_path_leaves_fallback_reserve(desktop, clock):
 
     vision.answer_from_text = burning_text
     reader = DailyHybridReader(vision, SlowOcr(read(), clock), verbose=False)
+    monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
     context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0,
                                         ocr_read=read(), ocr_accepted=True)
-    daily.answer_one_question(config(reader), desktop[0], None, 1,
-                              capture_context=context)
-    assert [c[0] for c in vision.calls] == ["text", "image"]
-    text_deadline = vision.calls[0][2]
-    image_deadline = vision.calls[1][2]
-    assert image_deadline - text_deadline >= FALLBACK_RESERVE_SECONDS
+    result = daily.answer_one_question(config(reader), desktop[0], None, 1,
+                                      capture_context=context)
+    assert vision.calls == [("text", pytest.approx(8.5), 109.0)]
+    assert result["guessed"] and result["answer"] == 0
+    assert not result.get("skipped")
+    assert desktop[1] == [320]
+    assert clock.now == 109.0
 
 
 @pytest.mark.parametrize("overrun", [0.001, 0.11, 0.2])
 @pytest.mark.parametrize("entry", ["daily", "hybrid"])
-def test_text_timeout_overrun_still_allows_image_fallback(desktop, clock, monkeypatch, entry, overrun):
-    """文本超时晚退出一点，也应留够 3.5 秒启动图片回退。"""
+def test_text_timeout_overrun_never_cascades_to_image(desktop, clock, monkeypatch, entry, overrun):
+    """文本超时稍晚退出仍直接蒙答或抛超时，不继续串行请求图片。"""
     vision = Vision()
-    image_started = []
 
     def timed_out_text(*args, **kwargs):
         vision.calls.append(("text", kwargs["timeout"], kwargs["deadline"]))
         clock.sleep(kwargs["deadline"] - clock.now + overrun)
         raise RecognitionTimeout("deadline_exceeded")
 
-    def slow_image(image, prompt=None, *, timeout=None, deadline=None):
-        vision.calls.append(("image", timeout, deadline))
-        image_started.append(clock.now)
-        clock.sleep(3.4)
-        return VisionQuestion(stem="题目", options=["甲", "乙", "丙"],
-                              answer_index=2, screen="question")
-
     vision.answer_from_text = timed_out_text
-    vision.read_question = slow_image
     reader = DailyHybridReader(vision, SlowOcr(read(), clock, seconds=0.542),
                                verbose=False)
     if entry == "daily":
-        # 慢回退会触发图龄复核；纯色测试帧需补齐仍在答题页的题号行证据。
         monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
         context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0)
         result = daily.answer_one_question(config(reader), desktop[0], None, 1,
                                            capture_context=context)
-        assert result["answer"] == 2 and not result["guessed"]
+        assert result["answer"] == 0 and result["guessed"]
         assert not result.get("skipped")
-        assert desktop[1] == [460]
+        assert desktop[1] == [320]
     else:
-        question = reader.read_question(desktop[0], deadline=109.0)
-        assert question.answer_index == 2
-    assert [call[0] for call in vision.calls] == ["text", "image"]
-    assert vision.calls[1][2] == 109.0
-    assert 109.0 - image_started[0] >= FALLBACK_RESERVE_SECONDS
-    assert clock.now < 109.0
+        with pytest.raises(RecognitionTimeout):
+            reader.read_question(desktop[0], deadline=109.0)
+    assert vision.calls == [("text", pytest.approx(8.458), 109.0)]
+    assert clock.now == pytest.approx(109.0 + overrun)
 
 
-def test_text_path_deadline_leaves_reserve_even_after_slow_ocr(desktop, clock):
-    """OCR 花了时间也不能把回退饿死 —— 文本路径的截止时刻照样留出保留。"""
+def test_text_deadline_does_not_reserve_image_budget_after_slow_ocr(desktop, clock):
+    """本地 OCR 消耗原总预算，剩余时间全部给文本，不额外续期。"""
     vision = Vision()
     reader = DailyHybridReader(vision, SlowOcr(read(), clock, seconds=1.5),
                                verbose=False)
@@ -365,8 +350,7 @@ def test_text_path_deadline_leaves_reserve_even_after_slow_ocr(desktop, clock):
                                         ocr_read=read(), ocr_accepted=True)
     daily.answer_one_question(config(reader), desktop[0], None, 1,
                               capture_context=context)
-    # 总预算 109.0 − 图片门槛 3.5 − 退出余量 0.3 = 105.2。
-    assert vision.calls[0][2] == pytest.approx(105.2)
+    assert vision.calls == [("text", pytest.approx(7.5), 109.0)]
 
 
 def test_text_path_takes_all_when_budget_cannot_split(desktop, clock):
@@ -400,18 +384,92 @@ def test_image_path_skipped_when_budget_below_floor(desktop, clock):
     assert result["guessed"]
 
 
-def test_text_path_deadline_keeps_reserve():
-    """切分规则本身：文本路径只能用「剩余预算减去保留」。"""
-    # 总预算 9 秒、保留 3.5 秒 → 文本路径截止 105.0。
+def test_text_path_deadline_uses_remaining_budget_without_renewal():
+    """配置上限与原截止时间取较早者；过期后不能重新给一份预算。"""
+    assert text_path_deadline(109.0, 100.0, 9.0) == 109.0
+    assert text_path_deadline(109.0, 100.5, 9.0) == 109.0
     assert text_path_deadline(109.0, 100.0, 5.0) == 105.0
-    # OCR 花了 0.5 秒 → 图片门槛之外还要留下 0.3 秒退出余量。
-    assert text_path_deadline(109.0, 100.5, 5.0) == pytest.approx(105.2)
-    # 仅剩 3.7 秒，装不下图片门槛 + 退出余量 → 全给文本路径。
     assert text_path_deadline(109.0, 105.3, 5.0) == 109.0
-    # 剩余不够留回退 → 全给文本路径。
     assert text_path_deadline(109.0, 106.0, 5.0) == 109.0
-    # 预算已耗光 → 文本路径仍有自己的一份短预算，图片回退不受益。
-    assert text_path_deadline(109.0, 110.0, 5.0) == 115.0
+    assert text_path_deadline(109.0, 110.0, 5.0) == 109.0
+
+
+@pytest.mark.parametrize("entry", ["daily", "hybrid"])
+def test_eight_second_text_answer_uses_nine_second_budget(desktop, clock, entry):
+    vision = Vision()
+
+    def slow_answer(*args, **kwargs):
+        vision.calls.append(("text", kwargs["timeout"], kwargs["deadline"]))
+        clock.sleep(8.0)
+        return 1
+
+    vision.answer_from_text = slow_answer
+    reader = DailyHybridReader(vision, SlowOcr(read(), clock), verbose=False)
+    if entry == "daily":
+        context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0)
+        result = daily.answer_one_question(config(reader), desktop[0], None, 1,
+                                          capture_context=context)
+        assert result["answer"] == 1 and not result["guessed"]
+        assert desktop[1] == [390]
+    else:
+        question = reader.read_question(desktop[0], deadline=109.0)
+        assert question.answer_index == 1
+    assert vision.calls == [("text", pytest.approx(8.5), 109.0)]
+    assert clock.now == 108.5
+
+
+@pytest.mark.parametrize("entry", ["daily", "hybrid"])
+def test_early_timeout_exception_is_not_treated_as_invalid_answer(desktop, clock, entry):
+    vision = Vision()
+
+    def timeout(*args, **kwargs):
+        vision.calls.append(("text", kwargs["timeout"], kwargs["deadline"]))
+        raise RecognitionTimeout("deadline_exceeded")
+
+    vision.answer_from_text = timeout
+    reader = DailyHybridReader(vision, Ocr(read()), verbose=False)
+    if entry == "daily":
+        context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0)
+        result = daily.answer_one_question(config(reader), desktop[0], None, 1,
+                                          capture_context=context)
+        assert result["guessed"] and desktop[1] == [320]
+    else:
+        with pytest.raises(RecognitionTimeout):
+            reader.read_question(desktop[0], deadline=109.0)
+    assert [call[0] for call in vision.calls] == ["text"]
+
+
+def test_expired_preread_budget_never_starts_a_new_request(desktop):
+    vision = Vision()
+    ocr = Ocr(read())
+    reader = DailyHybridReader(vision, ocr, verbose=False)
+    context = daily.DailyCaptureContext(captured_at=90.0, confirmed_at=90.0,
+        ocr_read=read(), ocr_accepted=True, local_attempted=True)
+    with pytest.raises(RecognitionTimeout):
+        daily._identify_question(config(reader), desktop[0], context)
+    assert vision.calls == [] and ocr.calls == 0
+
+
+@pytest.mark.parametrize("state", ["changed", "revealed", "missing_progress"])
+def test_timeout_guess_still_requires_fresh_same_question(desktop, clock, monkeypatch, state):
+    vision = Vision()
+
+    def timeout(*args, **kwargs):
+        vision.calls.append(("text", kwargs["timeout"], kwargs["deadline"]))
+        clock.sleep(kwargs["deadline"] - clock.now)
+        raise RecognitionTimeout("deadline_exceeded")
+
+    vision.answer_from_text = timeout
+    reader = DailyHybridReader(vision, Ocr(read()), verbose=False)
+    monkeypatch.setattr(daily, "has_progress_line", lambda _: state != "missing_progress")
+    monkeypatch.setattr(daily, "has_answer_reveal", lambda _: state == "revealed")
+    monkeypatch.setattr(daily, "is_same_question", lambda *_: state != "changed")
+    context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0)
+    result = daily.answer_one_question(config(reader), desktop[0], None, 1,
+                                      capture_context=context)
+    assert result["skipped"]
+    assert desktop[1] == []
+    assert [call[0] for call in vision.calls] == ["text"]
 
 
 @pytest.mark.parametrize("captured_at", [None, 90.0])

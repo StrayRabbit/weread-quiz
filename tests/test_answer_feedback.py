@@ -125,6 +125,7 @@ def test_pk_wait_reuses_existing_frame(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", lambda _: grabs.append(True) or next(images))
     monkeypatch.setattr(pk, "has_answer_reveal", lambda im: False)
     monkeypatch.setattr(pk, "is_question_screen", lambda im: True)
+    monkeypatch.setattr(pk, "looks_like_question_template", lambda im: True)
     current, _ = pk.wait_for_next_question(None, frame(), delay=0, feedback=feedback)
     assert feedback.status == "wrong"
     assert len(grabs) == 2
@@ -437,6 +438,7 @@ def test_pk_wait_captures_feedback_before_the_fixed_delay(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", grab)
     monkeypatch.setattr(pk, "has_answer_reveal", lambda im: False)
     monkeypatch.setattr(pk, "is_question_screen", lambda im: True)
+    monkeypatch.setattr(pk, "looks_like_question_template", lambda im: True)
     monkeypatch.setattr(pk, "is_new_question", lambda a, b: True)
     pk.wait_for_next_question(None, frame(), delay=1.0, feedback=feedback)
     assert feedback.status == "correct"
@@ -463,6 +465,7 @@ def test_pk_last_question_samples_the_whole_window(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", lambda r: grabs.append(True) or frame())
     monkeypatch.setattr(pk, "has_answer_reveal", lambda im: False)
     monkeypatch.setattr(pk, "is_question_screen", lambda im: True)
+    monkeypatch.setattr(pk, "looks_like_question_template", lambda im: True)
     monkeypatch.setattr(pk, "is_new_question", lambda a, b: True)
     pk.wait_for_next_question(None, frame(), delay=1.0, feedback=feedback)
     assert len(grabs) == len(pk._FEEDBACK_SAMPLE_OFFSETS) + 1
@@ -480,6 +483,7 @@ def test_pk_wait_for_normal_question_does_not_capture_extra(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", lambda r: grabs.append(True) or frame())
     monkeypatch.setattr(pk, "has_answer_reveal", lambda im: False)
     monkeypatch.setattr(pk, "is_question_screen", lambda im: True)
+    monkeypatch.setattr(pk, "looks_like_question_template", lambda im: True)
     monkeypatch.setattr(pk, "is_new_question", lambda a, b: True)
     pk.wait_for_next_question(None, frame(), delay=1.0, feedback=feedback)
     assert len(grabs) == 1
@@ -547,6 +551,7 @@ def test_pk_wait_without_feedback_keeps_single_capture(monkeypatch):
     monkeypatch.setattr(pk, "grab_screen", lambda r: grabs.append(True) or frame())
     monkeypatch.setattr(pk, "has_answer_reveal", lambda im: False)
     monkeypatch.setattr(pk, "is_question_screen", lambda im: True)
+    monkeypatch.setattr(pk, "looks_like_question_template", lambda im: True)
     monkeypatch.setattr(pk, "is_new_question", lambda a, b: True)
     pk.wait_for_next_question(None, frame(), delay=1.0)
     assert len(grabs) == 1

@@ -3,30 +3,21 @@ from dataclasses import dataclass
 import time
 
 
-_CLICK_RESERVE_SECONDS = 1.5
+_CLICK_RESERVE_SECONDS = 0.8
 
-# 文本阶段（本地 OCR 后判下标）的配置上限，可用 PK_TEXT_TIMEOUT 调整。
-# 有图片能力时还要按当前余量预留图片预算及超时退出余量，不能只看此上限。
-_TEXT_PATH_TIMEOUT = 5.0
+# 文本优先：默认允许用足题目剩余预算，PK_TEXT_TIMEOUT 仍可设置更短上限。
+_TEXT_PATH_TIMEOUT = 12.0
 
-# 图片路径至少要剩这么多预算才值得试。
-#
-# 图片路径要把整张图编码后发给模型读，实测 1.5~3 秒。留 3.5 秒是
-# 「切掉慢的文本路径之后还够跑一次图片路径」的底线。
+# 图片路径至少要剩这么多预算才值得试。仅用于 OCR 判否或文本提前无效时的回退；
+# 不再从正常文本请求的预算里预扣这段时间。
 _IMAGE_PATH_MIN_BUDGET = 3.5
-_TEXT_TIMEOUT_EXIT_MARGIN_SECONDS = 0.3
 
 
-def text_path_timeout(timeout: float, deadline: float | None, *,
-                      supports_image: bool = True) -> float:
-    """按当前余量限制文本阶段；能回退时预留图片预算及超时退出余量。"""
+def text_path_timeout(timeout: float, deadline: float | None) -> float:
+    """文本使用剩余识别预算，不为超时后的图片路径预留时间。"""
     if deadline is None:
         return timeout
-    remaining = max(0.0, deadline - time.monotonic())
-    if supports_image and remaining >= _IMAGE_PATH_MIN_BUDGET:
-        remaining = max(0.0, remaining - _IMAGE_PATH_MIN_BUDGET
-                        - _TEXT_TIMEOUT_EXIT_MARGIN_SECONDS)
-    return min(timeout, remaining)
+    return min(timeout, max(0.0, deadline - time.monotonic()))
 
 
 @dataclass

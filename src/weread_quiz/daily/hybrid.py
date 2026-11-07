@@ -7,13 +7,13 @@ from PIL import Image
 
 from .ocr import DailyOcrRead, DailyOcrReader, TEXT_PROMPT
 from .vision import FALLBACK_RESERVE_SECONDS, text_path_deadline
-from ..errors import AnswerUnavailable, OcrRejected
+from ..errors import AnswerUnavailable, OcrRejected, RecognitionTimeout
 from ..recognition import answer_from_read, read_local, text_then_image
 from ..vision import VisionQuestion, VisionService, _check_deadline
 
-# 与 daily.py 的同名常量保持一致（数字对齐 PK 链路）。
+# 与 daily.runner 保持一致：固定 9 秒识别预算，文本优先使用剩余时间。
 _IDENTIFY_BUDGET_SECONDS = 9.0
-_TEXT_TIMEOUT = 5.0
+_TEXT_TIMEOUT = 9.0
 
 
 def _crop_card(image: Image.Image) -> Image.Image:
@@ -106,7 +106,7 @@ class DailyHybridReader:
 
     def read_question(self, image: Image.Image, prompt=None, *,
                       timeout=None, deadline=None) -> VisionQuestion:
-        """识别级联共用一个绝对预算，文本失败后只花剩余预算回退图片。"""
+        """共用原绝对预算；文本超时向外传播，仅提前无效结果可回退图片。"""
         if deadline is None:
             deadline = time.monotonic() + _IDENTIFY_BUDGET_SECONDS
         if self.local_ocr_available is False:
@@ -118,14 +118,19 @@ class DailyHybridReader:
                 self._log(f"图片路径 回退原因：{exc}")
                 return None
             _check_deadline(deadline)
-            text_deadline = text_path_deadline(deadline, time.monotonic(), _TEXT_TIMEOUT)
+            now = time.monotonic()
+            limit = min(timeout if timeout is not None else _TEXT_TIMEOUT, _TEXT_TIMEOUT)
+            text_deadline = text_path_deadline(deadline, now, limit)
+            _check_deadline(text_deadline)
             try:
                 question = self.answer_from_ocr_read(
-                    local, timeout=min(timeout or _TEXT_TIMEOUT, _TEXT_TIMEOUT),
-                    deadline=text_deadline,
+                    local, timeout=text_deadline - now, deadline=text_deadline,
                 )
+            except RecognitionTimeout:
+                raise
             except AnswerUnavailable:
                 question = None
+            _check_deadline(text_deadline)
             if question is None:
                 self._log("图片路径 回退原因：OCR 文本路径未取到合法答案")
             return question

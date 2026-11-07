@@ -140,6 +140,8 @@ class PKCaptureContext:
     # 结算页上只有称号、星级和奖励积分，**没有比分** —— 最终比分只在这
     # 张画面上，胜负靠它判。
     final_frame: object | None = None
+    # 渐隐会让像素判据失效，但转场起点仍可能读出更晚更新的比分。
+    final_transition_frame: object | None = None
 
     def reset(self) -> None:
         self.captured_at = None
@@ -151,6 +153,7 @@ class PKCaptureContext:
         self.progress_text = ""
         self.progress_total = None
         self.final_frame = None
+        self.final_transition_frame = None
 
 
 def _store_progress(context, text: str) -> None:
@@ -889,12 +892,7 @@ def _guess_after_timeout(region, image, question, skip, guess_on_failure,
 
 
 def _answer_from_pre_read(vision, ocr_read, *, deadline: float | None = None):
-    """复用预读请求一次文本答案；单次最多文本路径上限秒。
-
-    剩下的预算留给图片路径 —— 文本路径一慢就整题蒙答太浪费（见
-    pk_budget._TEXT_PATH_TIMEOUT）。上限由配置给（PK_TEXT_TIMEOUT）——
-    混合读取器带着这个值，替身没有就退回默认值。
-    """
+    """复用预读请求一次文本答案，使用剩余预算并遵守配置上限；到时直接蒙答。"""
     answer = getattr(vision, "answer_from_ocr_read", None)
     if answer is None:
         return None
@@ -909,12 +907,12 @@ def _answer_from_pre_read(vision, ocr_read, *, deadline: float | None = None):
         # 保留完整本地预读的旧时间戳豁免，点击前仍须通过同题校验。
         remaining = 3.0
         deadline = now + remaining
-    timeout = text_path_timeout(cap, deadline,
-                                supports_image=getattr(vision, "supports_image", True))
+    timeout = text_path_timeout(cap, deadline)
     if timeout <= 0:
-        return None
-    question = answer(ocr_read, timeout=timeout, deadline=deadline)
-    if time.monotonic() >= deadline:
+        raise RecognitionTimeout("deadline_exceeded")
+    text_deadline = min(deadline, now + timeout)
+    question = answer(ocr_read, timeout=timeout, deadline=text_deadline)
+    if time.monotonic() >= text_deadline:
         raise RecognitionTimeout("deadline_exceeded")
     return question
 
@@ -1178,10 +1176,8 @@ def answer_one_question(
             answer = None
             if (preread_suspect and getattr(vision, "supports_image", True)
                     and _enough_for_image(budget)):
-                # 只走图片路径：**不重跑本地 OCR，也不重试文本路径**。
-                #
-                # 文本路径刚刚失败过（多半是慢），再来一遍只会把剩余
-                # 预算也吃掉 —— 到头来还是蒙答，而蒙答只有一半机会。
+                # 仅提前返回的无效结果才到这里；文本到时已直接进入蒙答。
+                # 只走图片路径，不重跑本地 OCR，也不重试文本请求。
                 try:
                     question = _read_image_only(vision, image, budget.deadline,
                                                capture_context)
@@ -1295,19 +1291,13 @@ def _is_settlement_page(image, ocr) -> bool:
     return is_settlement_page(image, ocr)
 
 
-def _looks_like_match_end(has_buttons: bool, card: bool | None,
-                           score_row: bool) -> bool:
-    """这一帧像不像"对局已经结束"（结算页）。
+def _looks_like_match_end(card: bool | None, score_row: bool) -> bool:
+    """卡片和比分行都消失时，允许用本地 OCR 确认结算。
 
-    三条都要满足：**没有选项按钮**、**答题卡片不在了**、**比分行也不在了**。
-
-    - 只有「没有按钮」不够：答错时按钮被染成红色，青色边框检测不到，
-      但对局还在继续（实测就是这么把 PK 提前收工的）。
-    - 只有「卡片不在了」也不够：**换题转场时卡片同样会淡出消失**（实测
-      2026-11-06 那局就在转场时被误判成结算页）。
-    - 比分行在卡片**上方**，不属于卡片：转场时它不动，结算页上整条没有。
+    不检查按钮：结算页的「再来一局」「炫耀一下」也符合选项按钮的几何特征。
+    换题转场时卡片同样会淡出，仍须后续读到结算页特有字样才能结束。
     """
-    if has_buttons or score_row:
+    if score_row:
         return False
     # 模板判否才算卡片不在；判不出来（None）时按还在处理 —— 宁可多等
     # 一会儿，也不能把还在答题的界面当成结算页。
@@ -1323,10 +1313,24 @@ def wait_for_next_question(region, current_image, watch: "Stopwatch | None" = No
     if capture_context is not None:
         capture_context.reset()
     wait_seconds = _NEXT_QUESTION_DELAY if delay is None else delay
+    last_frame = None
+    transition_frame = None
+
+    def grab_feedback_frame():
+        nonlocal last_frame, transition_frame
+        image = grab_screen(region)
+        if capture_context is not None:
+            if has_score_row(image):
+                last_frame = image
+                transition_frame = None
+            elif (transition_frame is None
+                  and looks_like_question_template(image) is False):
+                transition_frame = image
+        return image
+
     if feedback is not None and feedback.last_question:
-        # 只有末题需要提前取帧：固定延迟中间连取几帧，晚了只剩渐隐的暗色。
-        # 这段时间本来就在等，不额外拉长总等待。
-        feedback.sample_window(lambda: grab_screen(region), delay=wait_seconds)
+        # 复用提前采样保留比分；反馈确认后采样仍继续，不依赖反馈观察器的状态。
+        feedback.sample_window(grab_feedback_frame, delay=wait_seconds)
     else:
         time.sleep(wait_seconds)
     captured_at = time.monotonic()
@@ -1344,9 +1348,14 @@ def wait_for_next_question(region, current_image, watch: "Stopwatch | None" = No
     has_buttons = is_question_screen(candidate)
     card = looks_like_question_template(candidate)
     score_row = has_score_row(candidate)
-    # 记下**最后一张还带着答题卡片**的画面：结算页上没有比分，
-    # 最终比分只在这张画面上（对局结束那一轮最要紧）。
-    last_frame = candidate if (revealed or has_buttons or card is True) else None
+    # 优先保留带比分行或答题卡片的画面；模板不可用时才借助按钮/揭示态。
+    # 结算页也有两个青色按钮，明确不含卡片时不能用它覆盖比分帧。
+    if (score_row or card is True
+            or (card is None and (revealed or has_buttons))):
+        last_frame = candidate
+        transition_frame = None
+    elif _looks_like_match_end(card, score_row) and transition_frame is None:
+        transition_frame = candidate
     # 「对局结束」判据已经连续成立的帧数。
     end_frames = 0
     # 上一次确认结算页的时刻（确认要花一次 OCR，别连着做）。
@@ -1366,15 +1375,16 @@ def wait_for_next_question(region, current_image, watch: "Stopwatch | None" = No
         has_buttons = is_question_screen(candidate)
         card = looks_like_question_template(candidate)
         score_row = has_score_row(candidate)
-        # 揭示态和答题态都还有卡片在 —— 只有结算页没有。答错时按钮
-        # 染红了检测不到，但卡片还在，那张画面照样留着判比分。
-        if now_revealed or has_buttons or card is True:
+        if (score_row or card is True
+                or (card is None and (now_revealed or has_buttons))):
             last_frame = candidate
         if now_revealed != revealed:
             revealed = not revealed
             if watch:
                 watch.mark(f"等下一题:{'进入' if revealed else '离开'}揭示态")
-        if _looks_like_match_end(has_buttons, card, score_row):
+        if _looks_like_match_end(card, score_row):
+            if transition_frame is None:
+                transition_frame = candidate
             end_frames += 1
             if end_frames == 1:
                 # 疑似到了结算页 —— 留一张证据，真出问题时能回看。
@@ -1398,33 +1408,35 @@ def wait_for_next_question(region, current_image, watch: "Stopwatch | None" = No
                 break
         else:
             end_frames = 0
+            transition_frame = None
 
     if watch:
         watch.mark(f"等下一题(固定{wait_seconds:.2f}s"
                    + (f" + 补等{total_waited:.1f}s)" if total_waited else ")"))
-    if not is_question_screen(candidate):
-        # 补等到底还是**没有按钮**。答错时按钮变红、检测不到青色边框，
-        # 这一段不能当成"对局结束" —— 卡片还在就是对局还在继续。
+    if not _is_next_question_ready(candidate, current_image):
+        # 结算页也可能有两个青色按钮；确认结算或等到上限后，都不能把
+        # 未就绪的画面（结算、转场、旧题）再次交给答题阶段。
         if watch:
-            watch.mark("等下一题:无按钮")
+            watch.mark("等下一题:未就绪")
         if capture_context is not None:
             capture_context.final_frame = last_frame
+            capture_context.final_transition_frame = transition_frame
         return None, None
-    if not _is_next_question_ready(candidate, current_image):
-        if watch:
-            watch.mark("等下一题:题干未变(按重复题处理)")
     if capture_context is not None:
         capture_context.captured_at = captured_at
     return candidate, None
 
 
 def _is_next_question_ready(candidate, current_image) -> bool:
-    """依次排除揭示态、检查题干已换、题干已渲染及按钮可用。"""
+    """排除揭示态和旧题，确认按钮及答题卡片结构，避免结算双按钮误放行。"""
     if has_answer_reveal(candidate):
         return False
     if current_image is not None and not is_new_question(current_image, candidate):
         return False
-    return is_question_screen(candidate)
+    if not is_question_screen(candidate):
+        return False
+    # 明确失配不能当成新题；模板不可用时保留原有降级路径。
+    return looks_like_question_template(candidate) is not False
 
 
 def run_pk(
@@ -1638,15 +1650,17 @@ def _read_final_score(capture_context, ocr):
     """读最终比分 (我方, 对手)；读不到返回 None。"""
     if capture_context is None or ocr is None:
         return None
-    frame = getattr(capture_context, "final_frame", None)
-    if frame is None:
-        return None
-    try:
-        from .score import read_score
+    from .score import read_score
 
-        mine, theirs = read_score(frame, ocr)
-    except Exception:  # noqa: BLE001 - 读不到比分不影响其它结算信息
-        return None
-    if mine is None or theirs is None:
-        return None
-    return (mine, theirs)
+    # 转场帧可能已经更新了对手分数；读不出时再用最后一张明确比分帧。
+    for frame in (getattr(capture_context, "final_transition_frame", None),
+                  getattr(capture_context, "final_frame", None)):
+        if frame is None:
+            continue
+        try:
+            mine, theirs = read_score(frame, ocr)
+        except Exception:  # noqa: BLE001 - 单帧失败仍可尝试备用帧
+            continue
+        if mine is not None and theirs is not None:
+            return (mine, theirs)
+    return None

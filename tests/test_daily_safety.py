@@ -210,7 +210,7 @@ def test_cli_closes_vision_if_advance_fails(monkeypatch, tmp_path, capsys):
     assert cli._cmd_daily(False) == 2
     assert closed == [True]
     output = capsys.readouterr().out
-    assert "识别预算=9s" in output and "文本上限=5s" in output
+    assert "识别预算=9s" in output and "文本上限=9s" in output
 
 
 def test_unavailable_ocr_uses_image_without_retrying_local(desktop):
@@ -301,18 +301,18 @@ def test_dry_run_emits_current_question_usage(desktop, monkeypatch):
     assert emitted == [("第 1 题", 1)]
 
 
-def test_expired_preread_has_only_own_short_text_budget(desktop, clock):
+def test_expired_preread_never_starts_a_new_text_budget(desktop, clock):
     clock.now = 110.0
     vision = Vision()
     reader = DailyHybridReader(vision, Ocr(read()), verbose=False)
     context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0,
                                         ocr_read=read(), ocr_accepted=True, local_attempted=True)
     result = daily.answer_one_question(config(reader), desktop[0], None, 1, capture_context=context)
-    assert vision.calls == [("text", 5.0, 115.0)]
-    assert result["answer"] == 1 and not result["guessed"]
+    assert vision.calls == []
+    assert result["skipped"] and desktop[1] == []
 
 
-def test_expired_preread_text_failure_does_not_extend_image_budget(desktop, clock):
+def test_expired_preread_does_not_start_text_or_image_requests(desktop, clock):
     clock.now = 110.0
     vision = Vision()
     vision.text_result = None
@@ -320,7 +320,7 @@ def test_expired_preread_text_failure_does_not_extend_image_budget(desktop, cloc
     context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0,
                                         ocr_read=read(), ocr_accepted=True, local_attempted=True)
     daily.answer_one_question(config(reader), desktop[0], None, 1, capture_context=context)
-    assert vision.calls == [("text", 5.0, 115.0)]
+    assert vision.calls == []
 
 
 def test_wait_counts_actual_requests_in_visual_fallback(desktop):

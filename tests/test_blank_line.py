@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from weread_quiz.blank import PLACEHOLDER, TextSpan, compose_stem, find_blank_lines
@@ -70,6 +71,40 @@ def test_thick_white_bar_is_not_a_blank():
     image = scene([(100, 140, y) for y in range(300, 306)])
     spans = [span(150, 210, 290, 320, "题")]
     assert find_blank_lines(image, (248, 380), spans) == []
+
+
+def test_embedded_blank_can_be_recovered_inside_a_merged_text_box():
+    image = scene([(212, 238, 322)])
+    spans = [span(164, 265, 300, 328, "早魅虐")]
+    assert find_blank_lines(image, (248, 378), spans) == []
+    blanks = find_blank_lines(image, (248, 378), spans, allow_embedded=True)
+    assert len(blanks) == 1
+    assert (blanks[0].x0, blanks[0].x1) == (212, 237)
+
+
+@pytest.mark.parametrize("text, rows", [
+    ("天下第一", [313]),
+    ("一清二楚", [307, 322]),
+    ("三心二意", [305, 313, 322]),
+])
+def test_embedded_detection_still_rejects_chinese_horizontal_strokes(text, rows):
+    image = scene([(150, 190, y) for y in rows])
+    spans = [span(100, 300, 300, 328, text)]
+    assert find_blank_lines(image, (248, 378), spans, allow_embedded=True) == []
+
+
+def test_embedded_candidate_with_a_distant_vertical_stroke_is_rejected():
+    """上方笔画离横线超过原有 8 像素窗口，仍须检查整个文字框。"""
+    image = scene([(212, 238, 322), (220, 225, 305)])
+    spans = [span(164, 265, 300, 328, "题干")]
+    assert find_blank_lines(image, (248, 378), spans, allow_embedded=True) == []
+
+
+def test_embedded_detection_does_not_change_normal_blank_positions():
+    image = scene([(100, 140, 322)])
+    spans = [span(150, 210, 300, 328, "题干")]
+    assert find_blank_lines(image, (248, 378), spans, allow_embedded=True) == (
+        find_blank_lines(image, (248, 378), spans))
 
 
 # ---- 题干合成 ----------------------------------------------------------

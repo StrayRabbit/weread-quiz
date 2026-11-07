@@ -71,11 +71,7 @@ def test_progress_cache_still_detects_real_progress_line_change():
 
 
 def test_text_deadline_uses_remaining_question_budget(monkeypatch):
-    """首题预读用单题剩余预算，但单次最多 _TEXT_PATH_TIMEOUT 秒。
-
-    上限不是「省时间」，是给**图片路径留预算**：文本路径吃光整题预算
-    的话，超时后就只能蒙答（见 pk_budget._TEXT_PATH_TIMEOUT）。
-    """
+    """首题预读用单题剩余预算，不再为图片回退提前截断文本。"""
     now = 1000.0
     monkeypatch.setattr(pk.time, "monotonic", lambda: now)
 
@@ -94,7 +90,7 @@ def test_text_deadline_uses_remaining_question_budget(monkeypatch):
     pk._answer_from_pre_read(Vision(), read, deadline=now + 6.0)
 
     assert seen["deadline"] == pytest.approx(now + 6.0)
-    assert seen["timeout"] == pytest.approx(6.0 - 3.5 - 0.3)
+    assert seen["timeout"] == pytest.approx(6.0)
 
 
 def test_text_deadline_still_respects_an_earlier_deadline(monkeypatch):

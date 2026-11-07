@@ -1,8 +1,8 @@
-"""慢文本请求不能饿死图片回退；蒙答记录只能复用已确认同题的 OCR。"""
+"""PK 文本用足预算；超时直接蒙答，提前无效响应或 OCR 判否才走图片。"""
 import pytest
 from PIL import Image
 
-from weread_quiz.errors import AnswerUnavailable
+from weread_quiz.errors import AnswerUnavailable, RecognitionTimeout
 from weread_quiz.models import Rect
 from weread_quiz.ocr_core import OcrDecision, OcrRead
 from weread_quiz.pk import runner as pk
@@ -79,10 +79,10 @@ def scene(monkeypatch):
     return clock, image, state
 
 
-def answer(scene, entry, model, *, seconds=12):
+def answer(scene, entry, model, *, seconds=12, text_timeout=12.0):
     clock, image, _ = scene
     ocr = Ocr(clock, seconds)
-    reader = HybridQuestionReader(model, ocr, verbose=False, text_timeout=6.5)
+    reader = HybridQuestionReader(model, ocr, verbose=False, text_timeout=text_timeout)
     options = {}
     if entry == "preread":
         options["ocr_read"] = ocr.read(image)
@@ -93,48 +93,79 @@ def answer(scene, entry, model, *, seconds=12):
 
 @pytest.mark.parametrize("entry", ["hybrid", "preread"])
 @pytest.mark.parametrize("overrun", [0.0, 0.02, 0.2])
-def test_slow_text_leaves_image_budget_even_when_timeout_exits_late(scene, entry, overrun):
+def test_text_timeout_uses_full_budget_then_guesses_without_image(scene, entry, overrun):
     clock, _, state = scene
     model = Model(clock, overrun=overrun)
     result, _ = answer(scene, entry, model)
-    assert model.text_calls == [(pytest.approx(5.85), pytest.approx(1006.7))]
-    assert len(model.image_calls) == 1
-    assert model.image_calls[0][0] == 1010.5, "图片回退不能延长整题截止时间"
-    assert model.image_calls[0][1] >= 3.5
-    assert result["answer"] == 1 and not result["guessed"]
+    assert model.text_calls == [(pytest.approx(10.35), pytest.approx(1011.2))]
+    assert model.image_calls == [], "文本超时后不再串行请求图片"
+    assert result["answer"] == 0 and result["guessed"]
     assert len(state["clicks"]) == 1
-    assert clock.now < 1010.5
+    assert clock.now + 0.28 < 1012.0, "超时退出后仍须给实际蒙答点击留时间"
 
 
 @pytest.mark.parametrize("entry", ["hybrid", "preread"])
-def test_timeout_exit_beyond_margin_does_not_force_image_request(scene, entry):
-    clock, _, state = scene
-    model = Model(clock, overrun=0.4)
+def test_eight_second_text_answer_is_not_cut_off_for_image_reserve(scene, entry):
+    _, _, state = scene
+    model = Model(scene[0], text_answer=1, text_cost=8.0)
     result, _ = answer(scene, entry, model)
-    assert model.image_calls == [], "剩余不足 3.5 秒时不能硬发图片请求"
-    assert result["guessed"] and result["options"] == ["甲", "乙"]
-    assert len(state["clicks"]) == 1
-
-
-@pytest.mark.parametrize("entry", ["hybrid", "preread"])
-def test_image_only_budget_skips_text_request(scene, entry):
-    clock, _, state = scene
-    model = Model(clock)
-    result, _ = answer(scene, entry, model, seconds=6)
-    assert model.text_calls == []
-    assert model.image_calls == [(1004.5, pytest.approx(3.65))]
+    assert model.text_calls == [(pytest.approx(10.35), pytest.approx(1011.2))]
+    assert model.image_calls == []
     assert result["answer"] == 1 and not result["guessed"]
     assert len(state["clicks"]) == 1
 
 
 @pytest.mark.parametrize("entry", ["hybrid", "preread"])
-def test_no_image_capability_keeps_configured_text_budget(scene, entry):
+def test_fast_invalid_text_result_can_still_fall_back_to_image(scene, entry):
+    clock, _, state = scene
+    model = Model(clock, text_cost=0.5)
+    result, _ = answer(scene, entry, model)
+    assert len(model.text_calls) == 1
+    assert model.image_calls == [(pytest.approx(1011.2), pytest.approx(9.85))]
+    assert result["answer"] == 1 and not result["guessed"]
+    assert len(state["clicks"]) == 1
+
+
+@pytest.mark.parametrize("entry", ["hybrid", "preread"])
+def test_fast_invalid_response_without_image_budget_guesses(scene, entry):
+    clock, _, state = scene
+    model = Model(clock, text_cost=0.5)
+    result, _ = answer(scene, entry, model, seconds=4)
+    assert len(model.text_calls) == 1
+    assert model.image_calls == []
+    assert result["guessed"]
+    assert len(state["clicks"]) == 1
+
+
+@pytest.mark.parametrize("entry", ["hybrid", "preread"])
+def test_short_question_budget_is_given_to_text_instead_of_skipping_it(scene, entry):
+    clock, _, state = scene
+    model = Model(clock, text_answer=1)
+    result, _ = answer(scene, entry, model, seconds=6)
+    assert model.text_calls == [(pytest.approx(4.35), pytest.approx(1005.2))]
+    assert model.image_calls == []
+    assert result["answer"] == 1 and not result["guessed"]
+    assert len(state["clicks"]) == 1
+
+
+@pytest.mark.parametrize("entry", ["hybrid", "preread"])
+def test_configured_text_timeout_is_still_an_upper_limit(scene, entry):
     clock, _, _ = scene
     model = Model(clock, supports_image=False, text_answer=1)
-    result, _ = answer(scene, entry, model)
-    assert model.text_calls == [(6.5, 1010.5)]
+    result, _ = answer(scene, entry, model, text_timeout=6.5)
+    assert model.text_calls == [(6.5, pytest.approx(1007.35))]
     assert model.image_calls == []
     assert not result["guessed"]
+
+
+@pytest.mark.parametrize("entry", ["hybrid", "preread"])
+def test_configured_timeout_does_not_trigger_image_even_with_time_left(scene, entry):
+    clock, _, state = scene
+    model = Model(clock)
+    result, _ = answer(scene, entry, model, text_timeout=2.0)
+    assert model.text_calls == [(2.0, pytest.approx(1002.85))]
+    assert model.image_calls == [], "配置上限到时也是超时，不能改走图片"
+    assert result["guessed"] and len(state["clicks"]) == 1
 
 
 @pytest.mark.parametrize("entry", ["hybrid", "preread"])
@@ -142,7 +173,7 @@ def test_no_image_capability_never_attempts_image_after_text_failure(scene, entr
     clock, _, state = scene
     model = Model(clock, supports_image=False, text_cost=1.0)
     result, _ = answer(scene, entry, model)
-    assert model.text_calls == [(6.5, 1010.5)]
+    assert model.text_calls == [(pytest.approx(10.35), pytest.approx(1011.2))]
     assert model.image_calls == []
     assert result["guessed"] and result["options"] == ["甲", "乙"]
     assert len(state["clicks"]) == 1
@@ -161,7 +192,7 @@ def test_legal_text_answer_does_not_trigger_image_review(scene, entry):
 @pytest.mark.parametrize("entry", ["hybrid", "preread"])
 def test_failed_models_keep_same_question_ocr_for_guess_record(scene, entry):
     clock, _, state = scene
-    model = Model(clock, overrun=0.2, image_fails=True)
+    model = Model(clock, text_cost=0.5, image_fails=True)
     result, _ = answer(scene, entry, model)
     assert result["guessed"] and not result["skipped"]
     assert result["stem"] == "题目"
@@ -177,9 +208,22 @@ def test_changed_question_does_not_reuse_ocr_in_timeout_record(scene):
     clock, _, state = scene
     state["same"] = False
     result, _ = answer(scene, "hybrid", Model(clock, image_fails=True))
-    # 不扩大本次修改范围：沿用现有超时蒙答策略，但不能把旧题内容标在新题上。
     assert result["guessed"]
     assert result["stem"] == "" and result["options"] == []
+    assert len(state["clicks"]) == 1
+
+
+def test_rejected_ocr_goes_directly_to_image_with_original_deadline(scene):
+    clock, image, state = scene
+    ocr = Ocr(clock)
+    ocr.accepted = False
+    model = Model(clock)
+    reader = HybridQuestionReader(model, ocr, verbose=False)
+    result = pk.answer_one_question(None, reader, image=image, captured_at=1000.0,
+        capture_context=pk.PKCaptureContext(captured_at=1000.0), verbose=False)
+    assert model.text_calls == []
+    assert model.image_calls == [(pytest.approx(1011.2), pytest.approx(10.35))]
+    assert result["answer"] == 1 and not result["guessed"]
     assert len(state["clicks"]) == 1
 
 
@@ -193,3 +237,100 @@ def test_reader_clears_previous_accepted_ocr_when_next_frame_is_rejected(scene):
     ocr.accepted = False
     reader.read_question(image, deadline=1010.5)
     assert reader.last_question_local_read is None
+
+
+def test_timeout_keeps_guess_disabled_when_requested(scene):
+    clock, image, state = scene
+    reader = HybridQuestionReader(Model(clock), Ocr(clock), verbose=False)
+    result = pk.answer_one_question(None, reader, image=image, captured_at=1000.0,
+                                   guess_on_failure=False, verbose=False)
+    assert result["skipped"] and not result["guessed"]
+    assert state["clicks"] == []
+
+
+def test_recognition_timeout_exception_never_falls_back_to_image(scene, monkeypatch):
+    clock, image, _ = scene
+    model = Model(clock)
+
+    def timed_out(*args, **kwargs):
+        raise RecognitionTimeout("deadline_exceeded")
+
+    monkeypatch.setattr(model, "answer_from_text", timed_out)
+    reader = HybridQuestionReader(model, Ocr(clock), verbose=False)
+    with pytest.raises(RecognitionTimeout):
+        reader.read_question(image, deadline=1011.2)
+    assert model.image_calls == []
+
+
+@pytest.mark.allow_network
+@pytest.mark.parametrize("entry", ["hybrid", "preread"])
+def test_real_http_text_timeout_guesses_without_an_image_request(monkeypatch, entry):
+    import http.server
+    import json
+    import threading
+    import time
+
+    from weread_quiz.vision import VisionService
+
+    release = threading.Event()
+    requests = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            is_image = any(item.get("type") == "image_url"
+                           for item in payload["messages"][0]["content"])
+            requests.append(is_image)
+            if not is_image:
+                release.wait(2.0)
+                return
+            body = json.dumps({"choices": [{"message": {"content":
+                '{"screen":"question","stem":"题目","options":["甲","乙"],"answer":1}'}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    item = OcrRead("题目", ["甲", "乙"], [0.99, 0.99], 2,
+                   has_progress=True, progress_text="第1题·共10题")
+
+    class LocalOcr:
+        def read(self, image):
+            return item
+
+        def decide_merged(self, whole, strip):
+            return OcrDecision(True, "", whole)
+
+    image = Image.new("RGB", (430, 788))
+    clicks = []
+    monkeypatch.setattr(pk, "grab_screen", lambda _: image)
+    monkeypatch.setattr(pk, "find_option_buttons",
+                        lambda _: [Rect(60, 380, 310, 44), Rect(60, 450, 310, 44)])
+    monkeypatch.setattr(pk, "is_same_question", lambda *_: True)
+    monkeypatch.setattr(pk, "click_box", lambda box, *a, **kw: clicks.append(box))
+    monkeypatch.setattr(pk, "read_question_number",
+                        lambda *a, **kw: pytest.fail("同题蒙答应复用已有题号，不额外 OCR"))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    service = VisionService(f"http://127.0.0.1:{server.server_port}", "local-test", "test")
+    try:
+        service.warmup_client()
+        reader = HybridQuestionReader(service, LocalOcr(), verbose=False, text_timeout=0.15)
+        started = time.monotonic()
+        result = pk.answer_one_question(None, reader, image=image, captured_at=started,
+            capture_context=pk.PKCaptureContext(captured_at=started),
+            ocr_read=item if entry == "preread" else None, verbose=False)
+        assert result["guessed"] and result["answer"] == 0
+        assert len(clicks) == 1
+        assert requests == [False], "真实文本 HTTP 超时后不得再发图片请求"
+        assert time.monotonic() - started < 1.0
+    finally:
+        release.set()
+        service.close()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=1.0)

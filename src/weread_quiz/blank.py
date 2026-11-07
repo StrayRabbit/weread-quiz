@@ -114,10 +114,12 @@ def find_blank_lines(
     min_length: int = _MIN_LENGTH,
     max_height: int = _MAX_HEIGHT,
     near_y: int = _NEAR_Y,
+    allow_embedded: bool = False,
 ) -> list[BlankLine]:
     """在 region=(上沿, 下沿) 里找独立的水平亮线。
 
     spans 是图上已知的文字段，用来排除「一」「二」这类横笔。
+    allow_embedded 仅用于分段补读：允许整行框内、行底部且上下干净的填空线。
     """
     top = max(0, int(region[0]))
     bottom = min(image.size[1], int(region[1]))
@@ -150,7 +152,10 @@ def find_blank_lines(
         y1 = top + last_row
         center = (y0 + y1) / 2
         if _touches_text(known, center, x0, x1, near_y):
-            continue
+            if not allow_embedded or not _is_embedded_blank(
+                light, top, known, first_row, last_row, x0, x1,
+            ):
+                continue
         if _has_ink_above_below(light, first_row, last_row, x0, x1):
             continue
         result.append(BlankLine(x0=x0, x1=x1, y0=y0, y1=y1))
@@ -222,6 +227,24 @@ def _touches_text(spans, center: float, x0: float, x1: float, near_y: int) -> bo
             continue
         overlap = min(x1, span.x1) - max(x0, span.x0)
         if overlap >= length * _OVERLAP_RATIO:
+            return True
+    return False
+
+
+def _is_embedded_blank(light, top, spans, first_row, last_row, x0, x1) -> bool:
+    """整行框内的填空线应在行底部，且整行高度内没有其他笔画穿过。"""
+    center = top + (first_row + last_row) / 2
+    for span in spans:
+        if not (span.x0 + 4 <= x0 and x1 + 4 <= span.x1
+                and span.y0 <= center <= span.y1):
+            continue
+        if center < span.y0 + (span.y1 - span.y0) * 0.65:
+            continue
+        left, right = x0 + _GAP_TOL, x1 - _GAP_TOL + 1
+        above = light[max(0, int(span.y0) - top):first_row, left:right]
+        below = light[last_row + 1:min(light.shape[0], int(np.ceil(span.y1)) - top),
+                      left:right]
+        if int(above.sum()) + int(below.sum()) <= _MAX_INK:
             return True
     return False
 
