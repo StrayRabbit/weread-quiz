@@ -105,13 +105,9 @@ class AppConfig:
     daily_ocr_min_confidence: float = 0.85
     pk_next_question_delay: float = 1.0
     pk_ocr_fallback_seconds: float = 3.0
-    # PK 文本路径（本地 OCR 读题 + 模型只判下标）的单次上限（秒）。
-    #
-    # 默认 5 秒是给快模型留的。慢模型要调高 —— 实测 MiniMax-M3.1-Flash
-    # 文本路径 3.2~4.6 秒、偶尔超过 5 秒，被切掉就只能蒙答。
-    #
-    # 调高要一起看预算：倒计时 12 秒减去点击预留是 10.5 秒，文本路径
-    # 占 6.5 秒就只剩 4 秒给图片路径（读图要 5.5 秒以上）。
+    # PK 文本阶段（判下标，含复核）的最大用时（秒）。
+    # 有图片能力时按当题余量缩短，为图片回退预留 3.5 秒及 0.3 秒退出余量；
+    # 没有图片能力时不做该预留，仍受整题识别截止时间限制。
     pk_text_timeout: float = _TEXT_PATH_TIMEOUT
 
     # 决策模型拿不准时的**复核门槛** —— 置信度低于它就转给视觉模型复核。

@@ -1,6 +1,6 @@
 [project]
 name = "weread-quiz"
-version = "1.0.2"
+version = "1.0.3"
 description = "微信读书每日一答与问答 PK 辅助工具"
 requires-python = ">=3.10"
 dependencies = [

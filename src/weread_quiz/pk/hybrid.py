@@ -7,8 +7,8 @@ from collections import Counter
 
 from PIL import Image
 
-from ..errors import AnswerUnavailable, OcrRejected
-from .budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT
+from ..errors import AnswerUnavailable, OcrRejected, RecognitionTimeout
+from .budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT, text_path_timeout
 from .ocr import OcrRead, RapidOcrReader, TEXT_PROMPT
 from ..recognition import answer_from_read, read_local, text_then_image
 from ..vision import VisionQuestion, VisionService, _check_deadline
@@ -76,6 +76,7 @@ class HybridQuestionReader:
                              else _TEXT_PATH_TIMEOUT)
         self.local_ocr_available: bool | None = None
         self.last_question_progress_text = ""
+        self.last_question_local_read: OcrRead | None = None
         self.last_question_local_finished_at = None
         self.last_question_model_started_at = None
         # 本局的门控统计，跑完打印，用来判断阈值定得合不合适。
@@ -131,6 +132,7 @@ class HybridQuestionReader:
                       timeout: float | None = None, deadline: float | None = None,
                       budget: PKQuestionBudget | None = None) -> VisionQuestion:
         """识别一道题并判答案。"""
+        self.last_question_local_read = None
         self.last_question_progress_text = ""
         self.last_question_local_finished_at = None
         self.last_question_model_started_at = None
@@ -147,6 +149,8 @@ class HybridQuestionReader:
         local = read_local(self._ocr, image, deadline=deadline, observe=observe)
         deadline = local.deadline
         read, decision = local.read, local.decision
+        if decision.accepted:
+            self.last_question_local_read = read
         strip_ran, strip_options = local.strip_ran, local.strip_options
         if read is not None and read.progress_text:
             self.last_question_progress_text = read.progress_text
@@ -180,6 +184,8 @@ class HybridQuestionReader:
             return question
 
         def visual():
+            if not getattr(self._vision, "supports_image", True):
+                raise AnswerUnavailable("no_image_capability")
             # 只有真正发出图片请求才计入回退次数。
             self.ocr_fallback += 1
             reason = self._merge_reason(decision, strip_ran=strip_ran,
@@ -283,9 +289,24 @@ class HybridQuestionReader:
 
     def _answer_from_text(self, read: OcrRead, *,
                           timeout: float | None = None, deadline: float | None = None) -> VisionQuestion | None:
-        """把 OCR 文本发给模型，只要下标；存在空槽时不发送请求。"""
-        return answer_from_read(self._vision, read, TEXT_PROMPT,
-                                timeout=timeout, deadline=deadline, log=self._log)
+        """把 OCR 文本发给模型，文本阶段（含复核）共用限时，超时后允许图片接手。"""
+        supports_image = getattr(self._vision, "supports_image", True)
+        started = time.monotonic()
+        limit = text_path_timeout(_text_timeout(timeout, self.text_timeout), deadline,
+                                  supports_image=supports_image)
+        if limit <= 0:
+            self._log("文本路径 跳过：剩余预算仅够图片回退")
+            return None
+        text_deadline = deadline
+        if supports_image and deadline is not None:
+            text_deadline = min(deadline, started + limit)
+        try:
+            return answer_from_read(self._vision, read, TEXT_PROMPT,
+                                    timeout=limit, deadline=text_deadline, log=self._log)
+        except RecognitionTimeout:
+            # 文本阶段到时不等于整题到时；图片仍使用原截止时间。
+            _check_deadline(deadline)
+            return None
 
     def __getattr__(self, name: str):
         """其余属性全部转给 VisionService（usage、read_result、close…）。"""

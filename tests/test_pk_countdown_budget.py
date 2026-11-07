@@ -87,7 +87,7 @@ def test_countdown_with_no_remaining_budget_does_not_call_model(scene):
     assert state["clicks"] == 0
 
 
-def test_hybrid_budget_extends_real_model_call_and_accepts_seven_second_answer(scene):
+def test_no_image_model_uses_countdown_budget_for_seven_second_answer(scene):
     state, image = scene
     seen = []
     class Ocr:
@@ -97,11 +97,13 @@ def test_hybrid_budget_extends_real_model_call_and_accepts_seven_second_answer(s
         def decide_merged(self, whole, strip):
             return SimpleNamespace(accepted=True, read=whole, reason="")
     class Model:
+        supports_image = False
+
         def answer_from_text(self, prompt, count, **kw):
             seen.append(kw["deadline"])
             state["now"] += 7.0
             return 1
-    hybrid = HybridQuestionReader(Model(), Ocr(), verbose=False)
+    hybrid = HybridQuestionReader(Model(), Ocr(), verbose=False, text_timeout=8.0)
     result = pk.answer_one_question(None, hybrid, image=image, captured_at=999.0, verbose=False)
     assert seen == [1009.5]
     assert result["guessed"] is False

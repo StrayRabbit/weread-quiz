@@ -24,7 +24,7 @@ from .screen import (
     is_question_screen, is_same_question, looks_like_question_template,
     progress_cache_mask, progress_cache_changed,
 )
-from .budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT
+from .budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT, text_path_timeout
 from .number import parse_progress_text, read_question_number
 from ..ocr_core import OcrRead
 from ..record import format_question_line
@@ -832,6 +832,7 @@ def wait_for_question(region, vision, timeout: float = 120.0, verbose: bool = Tr
 
 def _guess_after_timeout(region, image, question, skip, guess_on_failure,
                          watch, error: str, *, ocr=None, progress_text="",
+                         local_read: OcrRead | None = None,
                          feedback: AnswerFeedback | None = None) -> dict:
     """识别失败后重抓并定位按钮，按当前题号和画面证据限制蒙答，未知页面不点击。"""
     if not guess_on_failure:
@@ -848,12 +849,15 @@ def _guess_after_timeout(region, image, question, skip, guess_on_failure,
         watch.mark("超时蒙题")
     # 仅同题校验通过时复用旧图题号；变化帧仍读取真正点击的 fresh 图。
     cached = parse_progress_text(progress_text)
-    reuse_progress = False
-    if cached[0] is not None or "最后一题" in (cached[2] or ""):
+    has_progress = cached[0] is not None or "最后一题" in (cached[2] or "")
+    same_question = False
+    if has_progress or question is not None or local_read is not None:
         try:
-            reuse_progress = image is not None and is_same_question(image, fresh)
+            same_question = image is not None and is_same_question(image, fresh)
         except Exception:  # noqa: BLE001 - 不能确认同题就读取新图
             pass
+    reuse_progress = has_progress and same_question
+    recorded = (question or local_read) if same_question else None
     click_box(box, region, pause=0.15)
     if feedback is not None:
         feedback.last_question = _is_last_question(progress_text)
@@ -869,8 +873,8 @@ def _guess_after_timeout(region, image, question, skip, guess_on_failure,
     if watch is not None:
         watch.mark("题号复用" if reuse_progress else "题号OCR")
     return {
-        "stem": getattr(question, "stem", ""),
-        "options": getattr(question, "options", []),
+        "stem": getattr(recorded, "stem", ""),
+        "options": getattr(recorded, "options", []),
         "answer": 0,
         "clicked_y": box.center_y,
         "guessed": True,
@@ -905,8 +909,11 @@ def _answer_from_pre_read(vision, ocr_read, *, deadline: float | None = None):
         # 保留完整本地预读的旧时间戳豁免，点击前仍须通过同题校验。
         remaining = 3.0
         deadline = now + remaining
-    question = answer(ocr_read, timeout=min(remaining, cap),
-                      deadline=deadline)
+    timeout = text_path_timeout(cap, deadline,
+                                supports_image=getattr(vision, "supports_image", True))
+    if timeout <= 0:
+        return None
+    question = answer(ocr_read, timeout=timeout, deadline=deadline)
     if time.monotonic() >= deadline:
         raise RecognitionTimeout("deadline_exceeded")
     return question
@@ -1057,10 +1064,11 @@ def answer_one_question(
         return (getattr(capture_context, "progress_text", "")
                 or getattr(ocr_read, "progress_text", ""))
 
-    def guess(error):
+    def guess(error, *, local_read=None):
         return _guess_after_timeout(
             region, image, question, skip, guess_on_failure, watch,
-            error, ocr=ocr, progress_text=current_progress_text(), feedback=feedback,
+            error, ocr=ocr, progress_text=current_progress_text(),
+            local_read=local_read or ocr_read, feedback=feedback,
         )
 
     try:
@@ -1119,11 +1127,11 @@ def answer_one_question(
                 try:
                     question = _read_by_image(vision, image, budget.deadline, capture_context, budget=budget)
                 except RecognitionTimeout:
-                    # 识别把单题预算耗光了（见 pk_hybrid 的级联预算检查）。
-                    # 这时截图早超龄，再做任何识别都是白等 —— 直接蒙。
-                    return guess("recognition_timeout")
+                    return guess("recognition_timeout", local_read=getattr(
+                        vision, "last_question_local_read", None))
                 except _ImagePathFailed as exc:
-                    return guess(f"识别失败：{exc}")
+                    return guess(f"识别失败：{exc}", local_read=getattr(
+                        vision, "last_question_local_read", None))
                 watch.mark("模型识别")
         if expired():
             return guess("模型返回时已过期")
@@ -1168,7 +1176,8 @@ def answer_one_question(
         except AnswerUnavailable as exc:
             safe_log(recorder, f"答案校验失败：{exc}")
             answer = None
-            if preread_suspect and _enough_for_image(budget):
+            if (preread_suspect and getattr(vision, "supports_image", True)
+                    and _enough_for_image(budget)):
                 # 只走图片路径：**不重跑本地 OCR，也不重试文本路径**。
                 #
                 # 文本路径刚刚失败过（多半是慢），再来一遍只会把剩余

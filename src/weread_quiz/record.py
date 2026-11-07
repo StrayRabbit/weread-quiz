@@ -30,7 +30,9 @@ def question_choice(result: dict) -> str:
         return f"跳过（{reason}），未点击"
     if result.get("guessed"):
         error = (result.get("error") or "识别失败")[:40]
-        return f"蒙第一个（{error}）"
+        options = result.get("options") or []
+        chosen = f"：{options[0]}" if options and options[0].strip() else ""
+        return f"蒙第一个{chosen}（{error}）"
     options = result.get("options") or []
     answer = result.get("answer")
     if result.get("bare_index"):

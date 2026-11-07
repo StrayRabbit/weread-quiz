@@ -424,7 +424,7 @@ A：不会。跳题卡 / 换题卡 / 续命卡一律不碰，也不会自动点�
 | `DAILY_OCR_MIN_CONFIDENCE` | `0.85` | daily 的阈值，独立于 PK |
 | `PK_NEXT_QUESTION_DELAY` | `1.0` | PK 点击后等下一题的固定延迟（秒） |
 | `PK_OCR_FALLBACK_SECONDS` | `3.0` | PK 本地 OCR 连续判否后，允许一次视觉兜底的等待时间（秒） |
-| `PK_TEXT_TIMEOUT` | `5.0` | PK 文本路径（判下标）的单次上限（秒）。慢模型调高到 6.5 |
+| `PK_TEXT_TIMEOUT` | `5.0` | PK 文本阶段（判下标，含复核）的最大用时（秒）；有图片能力时动态缩短，为图片回退留预算 |
 
 改完重新启动生效。
 

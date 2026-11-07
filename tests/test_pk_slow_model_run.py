@@ -94,7 +94,7 @@ def test_text_deadline_uses_remaining_question_budget(monkeypatch):
     pk._answer_from_pre_read(Vision(), read, deadline=now + 6.0)
 
     assert seen["deadline"] == pytest.approx(now + 6.0)
-    assert seen["timeout"] == pytest.approx(pk._TEXT_PATH_TIMEOUT)
+    assert seen["timeout"] == pytest.approx(6.0 - 3.5 - 0.3)
 
 
 def test_text_deadline_still_respects_an_earlier_deadline(monkeypatch):
