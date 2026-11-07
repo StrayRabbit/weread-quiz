@@ -317,7 +317,7 @@ def test_text_path_leaves_fallback_reserve(desktop, clock):
 
 @pytest.mark.parametrize("overrun", [0.001, 0.11, 0.2])
 @pytest.mark.parametrize("entry", ["daily", "hybrid"])
-def test_text_timeout_overrun_still_allows_image_fallback(desktop, clock, entry, overrun):
+def test_text_timeout_overrun_still_allows_image_fallback(desktop, clock, monkeypatch, entry, overrun):
     """文本超时晚退出一点，也应留够 3.5 秒启动图片回退。"""
     vision = Vision()
     image_started = []
@@ -339,10 +339,14 @@ def test_text_timeout_overrun_still_allows_image_fallback(desktop, clock, entry,
     reader = DailyHybridReader(vision, SlowOcr(read(), clock, seconds=0.542),
                                verbose=False)
     if entry == "daily":
+        # 慢回退会触发图龄复核；纯色测试帧需补齐仍在答题页的题号行证据。
+        monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
         context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0)
         result = daily.answer_one_question(config(reader), desktop[0], None, 1,
                                            capture_context=context)
         assert result["answer"] == 2 and not result["guessed"]
+        assert not result.get("skipped")
+        assert desktop[1] == [460]
     else:
         question = reader.read_question(desktop[0], deadline=109.0)
         assert question.answer_index == 2
