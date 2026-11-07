@@ -1,10 +1,11 @@
-"""PK 选项按钮定位：按青色边框分带，返回从上到下排列的原图矩形。"""
+"""PK 选项按钮定位：检测青色外轮廓，返回从上到下排列的原图矩形。"""
 
 from __future__ import annotations
 
 import numpy as np
 from PIL import Image
 
+from .button_contours import find_contour_bands
 from .errors import WqError
 from .models import Rect
 
@@ -13,12 +14,10 @@ _CYAN_MIN_BLUE = 90
 _CYAN_MIN_GREEN = 70
 _CYAN_MIN_BLUE_OVER_RED = 20
 
-# 每行至少这么多青色像素才算"这一行横穿了按钮边框"。
-# 按钮宽约 310px；卡片边框只有 2~3px 宽。
-_MIN_ROW_WIDTH = 100
-
-# 连续段最小厚度。按钮高 43~50px，卡片边框和装饰线只有 1~3px。
+# 按钮外轮廓的宽高范围；排除文字、装饰线和卡片边框。
+_MIN_BUTTON_WIDTH = 200
 _MIN_BAND_HEIGHT = 30
+_MAX_BAND_HEIGHT = 80
 
 _OPTION_TOP = 340
 _OPTION_BOTTOM = 700
@@ -30,6 +29,16 @@ _BUTTON_WIDTH = 310
 _MIN_OPTIONS = 2
 # 上限：超过这个数多半是误检（卡片边框被当成按钮）
 _MAX_OPTIONS = 8
+
+
+def _cyan_mask(arr: np.ndarray) -> np.ndarray:
+    arr = arr.astype(np.int16)
+    red, green, blue = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    return (
+        (blue - red > _CYAN_MIN_BLUE_OVER_RED)
+        & (blue > _CYAN_MIN_BLUE)
+        & (green > _CYAN_MIN_GREEN)
+    )
 
 
 def cyan_row_counts(image: Image.Image, top: int = 0,
@@ -46,37 +55,24 @@ def cyan_row_counts(image: Image.Image, top: int = 0,
         return np.zeros(0, dtype=int)
     # 只把搜索区间转成数组。convert+astype 整图是这一步的主要开销。
     crop = image.crop((0, start, image.size[0], end))
-    arr = np.asarray(crop.convert("RGB")).astype(int)
-    red, green, blue = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-    cyan = (
-        (blue - red > _CYAN_MIN_BLUE_OVER_RED)
-        & (blue > _CYAN_MIN_BLUE)
-        & (green > _CYAN_MIN_GREEN)
-    )
-    return cyan.sum(axis=1)
+    return _cyan_mask(np.asarray(crop.convert("RGB"))).sum(axis=1)
 
 
 def find_cyan_bands(image: Image.Image, top: int = 0, bottom: int | None = None) -> list[tuple[int, int]]:
-    """找出横向的青色边框条，返回 [(y_top, y_bottom), ...]。"""
+    """找出青色按钮外轮廓，返回 [(y_top, y_bottom), ...]。"""
     height = image.size[1]
-    end = height if bottom is None else min(bottom, height)
+    end = height if bottom is None else max(0, min(bottom, height))
     start = max(0, min(top, end))
-    if end <= start:
+    right = min(_BUTTON_LEFT + _BUTTON_WIDTH, image.width)
+    if end <= start or right <= _BUTTON_LEFT:
         return []
-    row_counts = cyan_row_counts(image, top=start, bottom=end)
-    bands: list[tuple[int, int]] = []
-    begin: int | None = None
-    for offset, count in enumerate(row_counts):
-        y = start + offset
-        if count >= _MIN_ROW_WIDTH and begin is None:
-            begin = y
-        elif count < _MIN_ROW_WIDTH and begin is not None:
-            bands.append((begin, y - 1))
-            begin = None
-    if begin is not None:
-        bands.append((begin, end - 1))
-
-    return [band for band in bands if band[1] - band[0] + 1 >= _MIN_BAND_HEIGHT]
+    # 卡片外围也是青色；排除两侧卡框，避免其外轮廓遮蔽内部按钮。
+    crop = image.crop((_BUTTON_LEFT, start, right, end))
+    return find_contour_bands(
+        _cyan_mask(np.asarray(crop.convert("RGB"))), min_width=_MIN_BUTTON_WIDTH,
+        min_height=_MIN_BAND_HEIGHT, max_height=_MAX_BAND_HEIGHT,
+        y_offset=start,
+    )
 
 
 def option_bands(image: Image.Image) -> list[tuple[int, int]]:

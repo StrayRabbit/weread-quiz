@@ -1,9 +1,10 @@
-"""每日一答选项定位：检测深蓝灰填充块，坐标与 OCR 按钮带保持一致。"""
+"""每日一答选项定位：检测深蓝灰外轮廓，坐标与 OCR 按钮带保持一致。"""
 from __future__ import annotations
 
 import numpy as np
 from PIL import Image
 
+from .button_contours import find_contour_bands
 from .errors import WqError
 from .models import Rect
 
@@ -20,9 +21,8 @@ _GRAY_BRIGHT_MAX = 105
 _GRAY_B_MIN = 50
 _GRAY_B_OVER_R = 5
 
-# 每行至少这么多深蓝灰像素才算"这一行横穿了按钮"。
-# 按钮宽约 320px，列搜索范围 30..400 共 370px。
-_MIN_ROW_WIDTH = 200
+# 按钮外轮廓的最小宽度，排除文字和小块装饰。
+_MIN_BUTTON_WIDTH = 200
 
 _MIN_BAND_HEIGHT = 35
 _MAX_BAND_HEIGHT = 80
@@ -35,9 +35,13 @@ _BUTTON_HEIGHT = 45
 
 
 def find_blue_gray_bands(arr: np.ndarray, top: int, bottom: int) -> list[tuple[int, int]]:
-    R = arr[:, :, 0].astype(int)
-    G = arr[:, :, 1].astype(int)
-    B = arr[:, :, 2].astype(int)
+    """从深蓝灰色块的外轮廓取按钮区间，不受内部白字孔洞影响。"""
+    start = max(0, min(top, arr.shape[0]))
+    end = max(start, min(bottom, arr.shape[0]))
+    region = arr[start:end, _BUTTON_LEFT:_BUTTON_RIGHT].astype(np.int16)
+    if region.size == 0:
+        return []
+    R, G, B = region[:, :, 0], region[:, :, 1], region[:, :, 2]
     bright = (R + G + B) / 3
     fill = (
         (bright > _GRAY_BRIGHT_MIN)
@@ -45,26 +49,11 @@ def find_blue_gray_bands(arr: np.ndarray, top: int, bottom: int) -> list[tuple[i
         & (B > _GRAY_B_MIN)
         & (B > R + _GRAY_B_OVER_R)
     )
-    row_counts = fill[top:bottom, _BUTTON_LEFT:_BUTTON_RIGHT].sum(axis=1)
-    bands: list[tuple[int, int]] = []
-    start: int | None = None
-    gap = 0
-    for offset, count in enumerate(row_counts):
-        y = top + offset
-        if count >= _MIN_ROW_WIDTH:
-            if start is None:
-                start = y
-            gap = 0
-        else:
-            if start is not None:
-                gap += 1
-                # 容忍 8px 内的断（按钮内花纹造成的几像素暗行）
-                if gap > 8:
-                    bands.append((start, y - gap))
-                    start = None
-    if start is not None:
-        bands.append((start, bottom - 1))
-    return [b for b in bands if _MIN_BAND_HEIGHT <= b[1] - b[0] + 1 <= _MAX_BAND_HEIGHT]
+    return find_contour_bands(
+        fill, min_width=_MIN_BUTTON_WIDTH,
+        min_height=_MIN_BAND_HEIGHT, max_height=_MAX_BAND_HEIGHT,
+        y_offset=start,
+    )
 
 
 def find_option_buttons(image: Image.Image) -> list[Rect]:

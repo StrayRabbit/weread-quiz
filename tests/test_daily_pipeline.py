@@ -315,6 +315,43 @@ def test_text_path_leaves_fallback_reserve(desktop, clock):
     assert image_deadline - text_deadline >= FALLBACK_RESERVE_SECONDS
 
 
+@pytest.mark.parametrize("overrun", [0.001, 0.11, 0.2])
+@pytest.mark.parametrize("entry", ["daily", "hybrid"])
+def test_text_timeout_overrun_still_allows_image_fallback(desktop, clock, entry, overrun):
+    """文本超时晚退出一点，也应留够 3.5 秒启动图片回退。"""
+    vision = Vision()
+    image_started = []
+
+    def timed_out_text(*args, **kwargs):
+        vision.calls.append(("text", kwargs["timeout"], kwargs["deadline"]))
+        clock.sleep(kwargs["deadline"] - clock.now + overrun)
+        raise RecognitionTimeout("deadline_exceeded")
+
+    def slow_image(image, prompt=None, *, timeout=None, deadline=None):
+        vision.calls.append(("image", timeout, deadline))
+        image_started.append(clock.now)
+        clock.sleep(3.4)
+        return VisionQuestion(stem="题目", options=["甲", "乙", "丙"],
+                              answer_index=2, screen="question")
+
+    vision.answer_from_text = timed_out_text
+    vision.read_question = slow_image
+    reader = DailyHybridReader(vision, SlowOcr(read(), clock, seconds=0.542),
+                               verbose=False)
+    if entry == "daily":
+        context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0)
+        result = daily.answer_one_question(config(reader), desktop[0], None, 1,
+                                           capture_context=context)
+        assert result["answer"] == 2 and not result["guessed"]
+    else:
+        question = reader.read_question(desktop[0], deadline=109.0)
+        assert question.answer_index == 2
+    assert [call[0] for call in vision.calls] == ["text", "image"]
+    assert vision.calls[1][2] == 109.0
+    assert 109.0 - image_started[0] >= FALLBACK_RESERVE_SECONDS
+    assert clock.now < 109.0
+
+
 def test_text_path_deadline_leaves_reserve_even_after_slow_ocr(desktop, clock):
     """OCR 花了时间也不能把回退饿死 —— 文本路径的截止时刻照样留出保留。"""
     vision = Vision()
@@ -324,8 +361,8 @@ def test_text_path_deadline_leaves_reserve_even_after_slow_ocr(desktop, clock):
                                         ocr_read=read(), ocr_accepted=True)
     daily.answer_one_question(config(reader), desktop[0], None, 1,
                               capture_context=context)
-    # 总预算 109.0 − 保留 3.5 = 105.5，与 OCR 快慢无关。
-    assert vision.calls[0][2] == 105.5
+    # 总预算 109.0 − 图片门槛 3.5 − 退出余量 0.3 = 105.2。
+    assert vision.calls[0][2] == pytest.approx(105.2)
 
 
 def test_text_path_takes_all_when_budget_cannot_split(desktop, clock):
@@ -363,8 +400,10 @@ def test_text_path_deadline_keeps_reserve():
     """切分规则本身：文本路径只能用「剩余预算减去保留」。"""
     # 总预算 9 秒、保留 3.5 秒 → 文本路径截止 105.0。
     assert text_path_deadline(109.0, 100.0, 5.0) == 105.0
-    # OCR 花了 0.5 秒 → 截止仍锚在「总预算 − 保留」上。
-    assert text_path_deadline(109.0, 100.5, 5.0) == 105.5
+    # OCR 花了 0.5 秒 → 图片门槛之外还要留下 0.3 秒退出余量。
+    assert text_path_deadline(109.0, 100.5, 5.0) == pytest.approx(105.2)
+    # 仅剩 3.7 秒，装不下图片门槛 + 退出余量 → 全给文本路径。
+    assert text_path_deadline(109.0, 105.3, 5.0) == 109.0
     # 剩余不够留回退 → 全给文本路径。
     assert text_path_deadline(109.0, 106.0, 5.0) == 109.0
     # 预算已耗光 → 文本路径仍有自己的一份短预算，图片回退不受益。

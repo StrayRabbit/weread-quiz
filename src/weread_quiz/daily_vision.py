@@ -34,9 +34,10 @@ DAILY_VISION_RETRIES = 0
 # 2.5 秒，模型慢一点就又超时，两条路同时空，只能蒙答（2026-11-02
 # 实测：第 5 题「中东地区石油出口量…占世界的百分比」就是这样错的）。
 #
-# 所以文本路径最多只能用「剩余预算减去这份保留」，图片回退始终拿得到
-# FALLBACK_RESERVE_SECONDS —— 数值与 PK 的 _IMAGE_PATH_MIN_BUDGET 对齐。
+# 图片启动门槛与 PK 的 _IMAGE_PATH_MIN_BUDGET 对齐；文本路径还要额外
+# 留出超时退出余量，避免 HTTP 超时稍晚返回就跌破图片启动门槛。
 FALLBACK_RESERVE_SECONDS = 3.5
+_TEXT_TIMEOUT_EXIT_MARGIN_SECONDS = 0.3
 
 
 def text_path_deadline(deadline: float, now: float, timeout: float) -> float:
@@ -52,7 +53,8 @@ def text_path_deadline(deadline: float, now: float, timeout: float) -> float:
     remaining = deadline - now
     if remaining <= 0:
         return now + timeout
-    budget = min(timeout, remaining - FALLBACK_RESERVE_SECONDS)
+    budget = min(timeout, remaining - FALLBACK_RESERVE_SECONDS
+                 - _TEXT_TIMEOUT_EXIT_MARGIN_SECONDS)
     if budget <= 0:
         budget = remaining
     return now + budget
