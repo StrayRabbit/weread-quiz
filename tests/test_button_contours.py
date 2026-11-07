@@ -5,10 +5,11 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from weread_quiz import buttons, daily_buttons
-from weread_quiz.daily_ocr import find_option_bands
+from weread_quiz.pk import buttons
+from weread_quiz.daily import buttons as daily_buttons
+from weread_quiz.daily.ocr import find_option_bands
 from weread_quiz.errors import WqError
-from weread_quiz.pk_ocr import RapidOcrReader
+from weread_quiz.pk.ocr import RapidOcrReader
 
 
 @pytest.mark.parametrize("mode", ["daily", "pk"])

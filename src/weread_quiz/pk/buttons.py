@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from .button_contours import find_contour_bands
-from .errors import WqError
-from .models import Rect
+from ..button_contours import find_contour_bands
+from ..errors import WqError
+from ..models import Rect
 
 # 青色判定：蓝色通道明显高于红色，且整体够亮
 _CYAN_MIN_BLUE = 90

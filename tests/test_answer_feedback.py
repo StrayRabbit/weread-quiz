@@ -117,7 +117,7 @@ def test_finish_records_once_without_changing_game_outcome():
 
 
 def test_pk_wait_reuses_existing_frame(monkeypatch):
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     feedback = observer()
     images = iter([frame(RED), frame(changed=True)])
     grabs = []
@@ -132,7 +132,8 @@ def test_pk_wait_reuses_existing_frame(monkeypatch):
 
 
 def test_daily_wait_reuses_existing_frame(monkeypatch):
-    from weread_quiz import daily, daily_buttons
+    from weread_quiz.daily import runner as daily
+    from weread_quiz.daily import buttons as daily_buttons
     from test_daily_pipeline import Clock
     feedback = observer("daily")
     clock = Clock()
@@ -151,7 +152,7 @@ def test_daily_wait_reuses_existing_frame(monkeypatch):
 
 
 def test_timeout_guess_uses_actual_fresh_frame_and_button(monkeypatch):
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from weread_quiz.answer_feedback import AnswerFeedback
     feedback = AnswerFeedback("pk")
     fresh = frame(changed=True)
@@ -172,7 +173,7 @@ def test_daily_last_question_samples_the_settle_window(monkeypatch):
 
     取帧时点与 PK 末题共用一份（answer_feedback.SAMPLE_OFFSETS）。
     """
-    from weread_quiz import daily
+    from weread_quiz.daily import runner as daily
     from test_daily_pipeline import Clock
     feedback = observer("daily")
     feedback.last_question = True
@@ -200,7 +201,7 @@ def test_daily_last_question_samples_the_settle_window(monkeypatch):
 
 
 def test_daily_click_starts_feedback_from_revalidated_button(monkeypatch):
-    from weread_quiz import daily
+    from weread_quiz.daily import runner as daily
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.vision import VisionQuestion
     feedback = AnswerFeedback("daily")
@@ -222,7 +223,7 @@ def test_daily_click_starts_feedback_from_revalidated_button(monkeypatch):
 
 def test_daily_last_question_captures_right_after_click(monkeypatch):
     """末题点击后立刻补一帧，才能赶上只亮一瞬的反馈色。"""
-    from weread_quiz import daily
+    from weread_quiz.daily import runner as daily
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.vision import VisionQuestion
     feedback = AnswerFeedback("daily")
@@ -245,7 +246,7 @@ def test_daily_last_question_captures_right_after_click(monkeypatch):
 
 def test_daily_normal_click_does_not_capture_extra(monkeypatch):
     """非末题不多抓一帧 —— 换题等待阶段本来就有取帧。"""
-    from weread_quiz import daily
+    from weread_quiz.daily import runner as daily
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.vision import VisionQuestion
     feedback = AnswerFeedback("daily")
@@ -282,7 +283,7 @@ def test_daily_last_question_dumps_the_sample_window():
 
 def test_run_daily_marks_the_last_question_for_early_capture(monkeypatch):
     """末题标记必须跟着 max_questions 走 —— 标错了就抓不到反馈色。"""
-    from weread_quiz import daily
+    from weread_quiz.daily import runner as daily
 
     created = []
 
@@ -410,7 +411,7 @@ def test_uniform_brighten_is_not_click_feedback():
 
 def test_pk_wait_captures_feedback_before_the_fixed_delay(monkeypatch):
     """末题：固定延迟走完之前就要取到那一帧 —— 之后只剩渐隐的暗色。"""
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from test_daily_pipeline import Clock
     feedback = observer()
     feedback.last_question = True
@@ -445,7 +446,7 @@ def test_pk_wait_captures_feedback_before_the_fixed_delay(monkeypatch):
 
 def test_pk_last_question_samples_the_whole_window(monkeypatch):
     """末题要在渐隐之前连着取几帧 —— 揭示色要等服务端回包才出现。"""
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from test_daily_pipeline import Clock
     feedback = observer()
     feedback.last_question = True
@@ -470,7 +471,7 @@ def test_pk_last_question_samples_the_whole_window(monkeypatch):
 
 def test_pk_wait_for_normal_question_does_not_capture_extra(monkeypatch):
     """非末题：不多抓一帧 —— 开销和改之前一样。"""
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     feedback = observer()
     feedback.last_question = False
     grabs = []
@@ -486,7 +487,7 @@ def test_pk_wait_for_normal_question_does_not_capture_extra(monkeypatch):
 
 
 def test_last_question_is_detected_from_progress_text():
-    from weread_quiz.pk import _is_last_question
+    from weread_quiz.pk.runner import _is_last_question
     assert _is_last_question("最后一题·分数翻倍")
     assert not _is_last_question("第9题·共10题")
     assert not _is_last_question("")
@@ -494,7 +495,7 @@ def test_last_question_is_detected_from_progress_text():
 
 def test_pk_normal_question_click_does_not_capture_extra(monkeypatch):
     """非末题点击后不多抓一帧。"""
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.vision import VisionQuestion
     feedback = AnswerFeedback("pk")
@@ -513,7 +514,7 @@ def test_pk_normal_question_click_does_not_capture_extra(monkeypatch):
 
 def test_pk_last_question_click_captures_right_after_click(monkeypatch):
     """末题点击后立刻补一帧，才能赶上只亮一瞬的反馈色。"""
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.ocr_core import OcrRead
     from weread_quiz.vision import VisionQuestion
@@ -539,7 +540,7 @@ def test_pk_last_question_click_captures_right_after_click(monkeypatch):
 
 
 def test_pk_wait_without_feedback_keeps_single_capture(monkeypatch):
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     grabs = []
     sleeps = []
     monkeypatch.setattr(pk.time, "sleep", lambda s: sleeps.append(s))
@@ -553,7 +554,7 @@ def test_pk_wait_without_feedback_keeps_single_capture(monkeypatch):
 
 
 def test_pk_normal_click_starts_feedback(monkeypatch):
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.vision import VisionQuestion
     feedback = AnswerFeedback("pk")
@@ -577,7 +578,7 @@ def test_pk_last_question_detected_when_progress_read_during_model_call(monkeypa
     末题判定必须用调用之后的原文 —— 开头取一次快照的话，末题永远判不出来，
     点击后就不会提前取帧，唯一一次取色落在固定延迟之后（那时页面已渐隐）。
     """
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.errors import RecognitionTimeout
 
@@ -650,7 +651,7 @@ def test_last_question_reveal_is_captured_end_to_end(monkeypatch):
     揭示色要等服务端回包才出现，末题页面却很快就开始渐隐转场。
     这条用例把「点击 → 末题判定 → 提前取帧 → 取色」整条链路走一遍。
     """
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
     from weread_quiz.answer_feedback import AnswerFeedback
     from weread_quiz.errors import RecognitionTimeout
     from test_daily_pipeline import Clock

@@ -5,8 +5,9 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from weread_quiz import daily, daily_screen
-from weread_quiz.daily_ocr import DailyOcrRead, DailyOcrReader, _is_point_sequence
+from weread_quiz.daily import runner as daily
+from weread_quiz.daily import screen as daily_screen
+from weread_quiz.daily.ocr import DailyOcrRead, DailyOcrReader, _is_point_sequence
 from weread_quiz.models import Rect
 from test_daily_pipeline import Clock
 
@@ -82,7 +83,7 @@ def terminal_frame():
 
 
 def test_single_button_terminal_is_confirmed_once(monkeypatch, fake_clock):
-    from weread_quiz.daily_buttons import _detect_any_buttons, find_blue_gray_bands
+    from weread_quiz.daily.buttons import _detect_any_buttons, find_blue_gray_bands
 
     image = terminal_frame()
     assert _detect_any_buttons(image)

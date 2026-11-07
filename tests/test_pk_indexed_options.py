@@ -8,8 +8,8 @@ from PIL import Image, ImageDraw
 
 from weread_quiz.errors import OcrRejected
 from weread_quiz.ocr_core import OcrRead
-from weread_quiz.pk_hybrid import HybridQuestionReader
-from weread_quiz.pk_ocr import RapidOcrReader
+from weread_quiz.pk.hybrid import HybridQuestionReader
+from weread_quiz.pk.ocr import RapidOcrReader
 
 
 BANDS = [(380, 424), (460, 504), (540, 584)]

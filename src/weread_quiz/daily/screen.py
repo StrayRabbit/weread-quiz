@@ -4,14 +4,14 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from .daily_buttons import (
+from .buttons import (
     _BUTTON_LEFT,
     _BUTTON_RIGHT,
     _OPTION_BOTTOM,
     _OPTION_TOP,
     find_option_buttons,
 )
-from .errors import WqError
+from ..errors import WqError
 
 # 题干所在的纵向区间。Daily 的题干在 y200..300，区别于 PK 的 y250..345。
 _STEM_BAND = (200, 300)

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw
 
-from weread_quiz.daily_buttons import find_option_buttons, pick_button
+from weread_quiz.daily.buttons import find_option_buttons, pick_button
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def test_real_poem_page_keeps_third_option(poem_image, scale):
 
 
 def test_real_poem_answer_clicks_third_option_without_guessing(poem_image, monkeypatch):
-    from weread_quiz import daily
+    from weread_quiz.daily import runner as daily
     from weread_quiz.models import Rect
     from weread_quiz.vision import VisionQuestion
 

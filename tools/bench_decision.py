@@ -45,7 +45,7 @@ from weread_quiz.model_service import (  # noqa: E402
     PROTOCOL_SYSTEMONE,
     detect_protocol,
 )
-from weread_quiz.pk_ocr import RapidOcrReader  # noqa: E402
+from weread_quiz.pk.ocr import RapidOcrReader  # noqa: E402
 from weread_quiz.vision import VisionService  # noqa: E402
 
 RUNS = ROOT / "data" / "runs" / "pk"
@@ -130,7 +130,7 @@ def run_decision(service: DecisionService, item: Item) -> tuple[int | None, floa
 
 
 def run_vision(service: VisionService, item: Item) -> tuple[int | None, float]:
-    from weread_quiz.pk_ocr import TEXT_PROMPT
+    from weread_quiz.pk.ocr import TEXT_PROMPT
 
     options = "\n".join(f"{i}. {t}" for i, t in enumerate(item.options))
     started = time.monotonic()

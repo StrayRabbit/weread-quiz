@@ -3,8 +3,8 @@
 与 PK 共用 record.format_question_line —— 两边的终端格式必须一样。
 """
 
-from weread_quiz import daily
-from weread_quiz.daily_hybrid import DailyHybridReader
+from weread_quiz.daily import runner as daily
+from weread_quiz.daily.hybrid import DailyHybridReader
 from weread_quiz.models import Rect
 from test_daily_pipeline import Ocr, Vision, clock, desktop, read  # noqa: F401
 

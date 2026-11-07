@@ -15,9 +15,9 @@ from .capture import RunRecorder  # _cmd_pk 用
 from .config import AppConfig
 from .errors import WqError
 from .main import _force_utf8_output as force_utf8_output
-from .pk import PKCaptureContext, _answer_from_pre_read, run_pk, wait_for_question  # 被 _run_pk_with_vision 引用，模块级 import
-from .pk_hybrid import HybridQuestionReader  # PK 的 OCR 快路径（门控不通过回退图片）
-from .pk_ocr import RapidOcrReader  # 同上
+from .pk.runner import PKCaptureContext, _answer_from_pre_read, run_pk, wait_for_question  # 被 _run_pk_with_vision 引用，模块级 import
+from .pk.hybrid import HybridQuestionReader  # PK 的 OCR 快路径（门控不通过回退图片）
+from .pk.ocr import RapidOcrReader  # 同上
 from .route import ROUTE_PK, get_route
 from .usage import emit_usage, safe_log, usage_since, usage_snapshot
 from .model_service import build_model_service
@@ -165,7 +165,7 @@ def _warmup_pk_model(vision, recorder) -> None:
 
 def _make_pk_question_judge(ocr=None):
     """PK 推进就绪判据：模板明确放行，或用独立题号行证据确认。"""
-    from .screen import looks_like_question_template
+    from .pk.screen import looks_like_question_template
 
     def is_question_page(image) -> bool:
         template = looks_like_question_template(image)
@@ -187,7 +187,7 @@ def _make_pk_question_judge(ocr=None):
 
 def _advance_to_ready(route, region, reader, recorder, ocr=None, refresh=None) -> bool:
     """把界面推进到答题页。返回 False 表示推进失败（已截图落盘）。"""
-    from .daily_screen import is_question_screen
+    from .daily.screen import is_question_screen
 
     options = {}
     if route.mode == "pk":
@@ -233,16 +233,16 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
     """运行指定每日一答路线；提前预热，推进失败也释放模型服务，不自动删除运行记录。"""
     from .capture import RunRecorder
     from .config import AppConfig
-    from .daily import (
+    from .daily.runner import (
         DailyConfig,
         _IDENTIFY_BUDGET_SECONDS,
         _IMAGE_PATH_MIN_BUDGET,
         _TEXT_TIMEOUT,
         run_daily,
     )
-    from .daily_hybrid import DailyHybridReader
-    from .daily_ocr import DailyOcrReader
-    from .daily_vision import DAILY_VISION_TIMEOUT, build_daily_vision_service
+    from .daily.hybrid import DailyHybridReader
+    from .daily.ocr import DailyOcrReader
+    from .daily.vision import DAILY_VISION_TIMEOUT, build_daily_vision_service
     from .dpi import get_scale_for_window, init_dpi_awareness
     from .usage import emit_usage, safe_log, usage_since, usage_snapshot
     from .window.finder import find_wechat_window
@@ -302,7 +302,7 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
         # OCR 快路径：门控不通过就自动回退图片路径，所以接上它没有正确性
         # 风险，只有收益。阈值靠跑真实局校准（见 daily_ocr 模块开头）。
         #
-        from .daily_ocr import DEFAULT_MIN_CONFIDENCE
+        from .daily.ocr import DEFAULT_MIN_CONFIDENCE
 
         reader = DailyHybridReader(
             vision,
@@ -514,7 +514,7 @@ def _run_pk_with_vision(cfg, region, vision, recorder, dry_run, max_questions,
             if image is None:
                 print("超时：没等到答题界面")
                 return 1
-            from .buttons import find_option_buttons
+            from .pk.buttons import find_option_buttons
 
             if question is None:
                 deadline = None

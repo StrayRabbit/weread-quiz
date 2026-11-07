@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from weread_quiz import capture
-from weread_quiz.buttons import find_option_buttons
+from weread_quiz.pk.buttons import find_option_buttons
 from weread_quiz.dpi import BASELINE_WIDTH, box_center_to_screen
 from weread_quiz.models import Rect
 

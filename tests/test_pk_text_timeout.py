@@ -10,10 +10,11 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from weread_quiz import config, pk
+from weread_quiz import config
+from weread_quiz.pk import runner as pk
 from weread_quiz.ocr_core import OcrRead
-from weread_quiz.pk_budget import _TEXT_PATH_TIMEOUT
-from weread_quiz.pk_hybrid import HybridQuestionReader
+from weread_quiz.pk.budget import _TEXT_PATH_TIMEOUT
+from weread_quiz.pk.hybrid import HybridQuestionReader
 
 
 def _read() -> OcrRead:

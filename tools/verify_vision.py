@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from weread_quiz.buttons import find_option_buttons
+from weread_quiz.pk.buttons import find_option_buttons
 from weread_quiz.config import AppConfig
 from weread_quiz.model_service import build_model_service
 

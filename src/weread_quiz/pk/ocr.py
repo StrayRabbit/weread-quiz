@@ -8,10 +8,10 @@ from dataclasses import replace
 import numpy as np
 from PIL import Image
 
-from .blank import PLACEHOLDER, TextSpan, compose_stem, find_blank_lines
+from ..blank import PLACEHOLDER, TextSpan, compose_stem, find_blank_lines
 from .buttons import option_bands
-from .errors import WqError
-from .ocr_core import (
+from ..errors import WqError
+from ..ocr_core import (
     OcrDecision,
     OcrRead,
     RapidOcrEngine,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from weread_quiz import pk
+from weread_quiz.pk import runner as pk
 from weread_quiz.models import Rect
 from weread_quiz.vision import VisionQuestion, make_non_question
 

@@ -8,9 +8,9 @@ import pytest
 from PIL import Image
 
 from weread_quiz.ocr_core import RapidOcrEngine
-from weread_quiz.pk_ocr import RapidOcrReader
-from weread_quiz.daily_ocr import DailyOcrReader
-from weread_quiz import pk_number
+from weread_quiz.pk.ocr import RapidOcrReader
+from weread_quiz.daily.ocr import DailyOcrReader
+from weread_quiz.pk import number as pk_number
 
 
 def _output(texts=("第 3 题·共 10 题", "汉朝")):

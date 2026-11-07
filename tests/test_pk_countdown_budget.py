@@ -4,12 +4,12 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from weread_quiz import pk
+from weread_quiz.pk import runner as pk
 from weread_quiz.errors import RecognitionTimeout
 from weread_quiz.models import Rect
 from weread_quiz.ocr_core import OcrRead
-from weread_quiz.pk_hybrid import HybridQuestionReader
-from weread_quiz.pk_ocr import RapidOcrReader
+from weread_quiz.pk.hybrid import HybridQuestionReader
+from weread_quiz.pk.ocr import RapidOcrReader
 from weread_quiz.vision import VisionQuestion
 
 

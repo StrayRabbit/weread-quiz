@@ -12,11 +12,11 @@ from typing import Literal
 import numpy as np
 from PIL import Image
 
-from .advance import read_text_lines
-from .blank import TextSpan, compose_stem, find_blank_lines
-from .daily_buttons import _OPTION_BOTTOM, _OPTION_TOP, find_blue_gray_bands
-from .daily_screen import has_answer_reveal
-from .ocr_core import OcrDecision, OcrRead, RapidOcrEngine
+from ..advance import read_text_lines
+from ..blank import TextSpan, compose_stem, find_blank_lines
+from .buttons import _OPTION_BOTTOM, _OPTION_TOP, find_blue_gray_bands
+from .screen import has_answer_reveal
+from ..ocr_core import OcrDecision, OcrRead, RapidOcrEngine
 
 # 置信度门控阈值。低于它就回退图片路径。
 #

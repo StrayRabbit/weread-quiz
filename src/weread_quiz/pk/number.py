@@ -29,7 +29,7 @@ def _default_engine():
     global _shared_engine
     if _shared_engine is None:
         try:
-            from .ocr_core import build_rapid_ocr  # noqa: PLC0415 - 延迟导入
+            from ..ocr_core import build_rapid_ocr  # noqa: PLC0415 - 延迟导入
             _shared_engine = build_rapid_ocr()
         except Exception:  # noqa: BLE001 - 缺依赖/读不出就当没有
             return None

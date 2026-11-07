@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from . import abort
-from .answer_feedback import SAMPLE_OFFSETS, AnswerFeedback
+from .. import abort
+from ..answer_feedback import SAMPLE_OFFSETS, AnswerFeedback
 from .buttons import find_option_buttons, pick_button
-from .capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
-from .click import click_box
-from .errors import (
+from ..capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
+from ..click import click_box
+from ..errors import (
     AnswerUnavailable,
     NotAQuestionScreen,
     OcrRejected,
@@ -24,12 +24,12 @@ from .screen import (
     is_question_screen, is_same_question, looks_like_question_template,
     progress_cache_mask, progress_cache_changed,
 )
-from .pk_budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT
-from .pk_number import parse_progress_text, read_question_number
-from .ocr_core import OcrRead
-from .record import format_question_line
-from .vision import VisionQuestion, VisionService, is_question, PROMPT_PK
-from .usage import (
+from .budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT
+from .number import parse_progress_text, read_question_number
+from ..ocr_core import OcrRead
+from ..record import format_question_line
+from ..vision import VisionQuestion, VisionService, is_question, PROMPT_PK
+from ..usage import (
     PhaseTotals,
     Stopwatch,
     log_usage,
@@ -1281,7 +1281,7 @@ def _is_settlement_page(image, ocr) -> bool:
     卡片没了、比分行也没了之后，只能靠读字来分辨「真的结束了」和
     「换题转场中」：转场时页面读不出这些字。
     """
-    from .result import is_settlement_page
+    from ..result import is_settlement_page
 
     return is_settlement_page(image, ocr)
 
@@ -1595,7 +1595,7 @@ def _read_final(region, report: PKReport, vision, recorder, verbose: bool, *,
     胜负由**比分**判定 —— 结算页上的奖励积分档位与输赢无关（实测 +1 的
     那一局是 125:60 的大胜）。比分只能从结算前最后一张答题卡片上读。
     """
-    from .result import read_result
+    from ..result import read_result
 
     time.sleep(1.5)  # 等结算页动画播完
     image = grab_screen(region)
@@ -1633,7 +1633,7 @@ def _read_final_score(capture_context, ocr):
     if frame is None:
         return None
     try:
-        from .pk_score import read_score
+        from .score import read_score
 
         mine, theirs = read_score(frame, ocr)
     except Exception:  # noqa: BLE001 - 读不到比分不影响其它结算信息

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PIL import Image
 
-from weread_quiz import pk
+from weread_quiz.pk import runner as pk
 
 
 def progress_plan(total_rounds: int, *, tiebreak_total: int | None = None):

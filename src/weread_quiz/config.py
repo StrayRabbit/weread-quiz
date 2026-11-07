@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .pk_budget import _TEXT_PATH_TIMEOUT
+from .pk.budget import _TEXT_PATH_TIMEOUT
 
 def _project_root() -> Path:
     """定位 .env 和 data/ 所在的目录。

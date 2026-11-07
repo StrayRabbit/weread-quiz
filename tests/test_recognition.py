@@ -4,12 +4,12 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from weread_quiz.daily_hybrid import DailyHybridReader
-from weread_quiz.daily_ocr import DailyOcrRead, DailyOcrReader
+from weread_quiz.daily.hybrid import DailyHybridReader
+from weread_quiz.daily.ocr import DailyOcrRead, DailyOcrReader
 from weread_quiz.errors import AnswerUnavailable, OcrRejected, RecognitionTimeout
 from weread_quiz.ocr_core import OcrDecision, OcrRead
-from weread_quiz.pk_hybrid import HybridQuestionReader
-from weread_quiz.pk_ocr import RapidOcrReader
+from weread_quiz.pk.hybrid import HybridQuestionReader
+from weread_quiz.pk.ocr import RapidOcrReader
 from weread_quiz.vision import VisionQuestion
 
 

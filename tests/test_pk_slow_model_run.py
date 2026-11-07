@@ -6,7 +6,8 @@ import time
 
 import pytest
 
-from weread_quiz import pk, screen
+from weread_quiz.pk import runner as pk
+from weread_quiz.pk import screen
 from weread_quiz.vision import VisionService
 
 

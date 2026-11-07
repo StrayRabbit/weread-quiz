@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from PIL import Image
 from pyautogui import FailSafeException
 
-from . import abort
-from .answer_feedback import SAMPLE_OFFSETS, AnswerFeedback
-from .capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
-from .click import click_box
-from .daily_buttons import find_option_buttons, pick_button
-from .daily_screen import (
+from .. import abort
+from ..answer_feedback import SAMPLE_OFFSETS, AnswerFeedback
+from ..capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
+from ..click import click_box
+from .buttons import find_option_buttons, pick_button
+from .screen import (
     has_answer_reveal,
     has_progress_line,
     is_new_question,
@@ -20,17 +20,17 @@ from .daily_screen import (
     is_question_stable,
     is_same_question,
 )
-from .daily_vision import (
+from .vision import (
     DAILY_TOTAL_QUESTIONS,
     DailyReport,
     read_daily_answer,
     read_daily_result,
     text_path_deadline,
 )
-from .errors import AnswerUnavailable, NotAQuestionScreen, OcrRejected, RecognitionTimeout, WqError
-from .record import format_question_line
-from .usage import PhaseTotals, Stopwatch, log_usage, safe_log, usage_since, usage_snapshot
-from .vision import VisionQuestion, VisionService, _check_deadline
+from ..errors import AnswerUnavailable, NotAQuestionScreen, OcrRejected, RecognitionTimeout, WqError
+from ..record import format_question_line
+from ..usage import PhaseTotals, Stopwatch, log_usage, safe_log, usage_since, usage_snapshot
+from ..vision import VisionQuestion, VisionService, _check_deadline
 
 # 单题识别的绝对预算、切分方式与图片路径下限。
 #
@@ -132,7 +132,7 @@ class DailyConfig:
 def wait_for_question(cfg: DailyConfig, timeout: float | None = None, *,
                       capture_context: DailyCaptureContext | None = None):
     """本地确认首题，返回 (原图, 可选答案)；模型答题交给逐题阶段。"""
-    from .daily_screen import has_rendered_stem
+    from .screen import has_rendered_stem
 
     context = capture_context if capture_context is not None else DailyCaptureContext()
     context.captured_at = context.confirmed_at = None
@@ -479,7 +479,7 @@ def _answer_one_question_inner(
 
 def _looks_like_revive_page(image: Image.Image) -> bool:
     """疑似终态的几何筛选：无题号、非揭示态且有按钮色块；不能据此判答错。"""
-    from .daily_buttons import _detect_any_buttons
+    from .buttons import _detect_any_buttons
 
     if has_progress_line(image):
         return False
@@ -524,7 +524,7 @@ def _safe_shot(cfg: DailyConfig, label: str, image: Image.Image | None) -> None:
 def _confirm_terminal(cfg: DailyConfig, frame: Image.Image,
                       watch: Stopwatch | None = None):
     """先排除题号/揭示态，再一次本地OCR后重抓，返回(可选结论, 最新实际帧)。"""
-    from .daily_buttons import _detect_any_buttons
+    from .buttons import _detect_any_buttons
 
     reader = _terminal_ocr(cfg)
     if reader is None or has_progress_line(frame) or has_answer_reveal(frame):
@@ -566,7 +566,7 @@ def wait_for_next_question(cfg: DailyConfig, current_image: Image.Image,
                           watch: Stopwatch | None = None, *,
                           feedback: AnswerFeedback | None = None) -> _WaitOutcome:
     """各阶段额度仅一次；OCR后fresh同轮处理，next要求连续两帧。"""
-    from .daily_buttons import _detect_any_buttons
+    from .buttons import _detect_any_buttons
 
     start = time.monotonic()
     hard_deadline = start + _NEXT_QUESTION_TIMEOUT

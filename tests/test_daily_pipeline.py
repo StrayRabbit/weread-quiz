@@ -4,10 +4,10 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from weread_quiz import daily
-from weread_quiz.daily_hybrid import DailyHybridReader
-from weread_quiz.daily_ocr import DailyOcrRead, DailyOcrReader
-from weread_quiz.daily_vision import FALLBACK_RESERVE_SECONDS, text_path_deadline
+from weread_quiz.daily import runner as daily
+from weread_quiz.daily.hybrid import DailyHybridReader
+from weread_quiz.daily.ocr import DailyOcrRead, DailyOcrReader
+from weread_quiz.daily.vision import FALLBACK_RESERVE_SECONDS, text_path_deadline
 from weread_quiz.errors import AnswerUnavailable, OcrRejected, RecognitionTimeout
 from weread_quiz.models import Rect
 from weread_quiz.vision import VisionQuestion
@@ -123,7 +123,7 @@ def test_visual_entry_does_not_repeat_local_ocr():
 
 def test_hybrid_does_not_cascade_after_absolute_deadline(monkeypatch):
     clock = Clock()
-    monkeypatch.setattr("weread_quiz.daily_hybrid.time.monotonic", clock)
+    monkeypatch.setattr("weread_quiz.daily.hybrid.time.monotonic", clock)
     vision = Vision()
 
     def slow_text(*args, **kwargs):
@@ -141,7 +141,7 @@ def test_hybrid_does_not_cascade_after_absolute_deadline(monkeypatch):
 def test_hybrid_cascade_leaves_fallback_reserve(monkeypatch):
     """混合级联里的文本路径同样要让出回退预算。"""
     clock = Clock()
-    monkeypatch.setattr("weread_quiz.daily_hybrid.time.monotonic", clock)
+    monkeypatch.setattr("weread_quiz.daily.hybrid.time.monotonic", clock)
     vision = Vision()
 
     def burning_text(*args, **kwargs):
@@ -170,7 +170,7 @@ def desktop(monkeypatch):
     monkeypatch.setattr(daily, "is_question_stable", lambda a, b: True)
     monkeypatch.setattr(daily, "is_same_question", lambda a, b: True)
     monkeypatch.setattr(daily, "has_answer_reveal", lambda image: False)
-    monkeypatch.setattr("weread_quiz.daily_screen.has_rendered_stem", lambda image: True)
+    monkeypatch.setattr("weread_quiz.daily.screen.has_rendered_stem", lambda image: True)
     monkeypatch.setattr(daily, "click_box", lambda box, *a, **k: clicks.append(box.center_y))
     return image, clicks
 

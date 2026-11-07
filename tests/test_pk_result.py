@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from weread_quiz import pk
+from weread_quiz.pk import runner as pk
 from weread_quiz.result import read_result, verdict_from_score
 
 

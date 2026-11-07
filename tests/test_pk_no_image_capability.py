@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from weread_quiz import pk
+from weread_quiz.pk import runner as pk
 
 
 class Recorder:

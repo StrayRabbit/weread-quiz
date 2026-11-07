@@ -6,7 +6,9 @@ import httpx
 import pytest
 from PIL import Image
 
-from weread_quiz import advance, cli, pk
+from weread_quiz import advance
+from weread_quiz import cli
+from weread_quiz.pk import runner as pk
 from weread_quiz.errors import RecognitionTimeout
 from weread_quiz.route import ROUTE_PK, get_route
 from weread_quiz.vision import VisionService

@@ -37,7 +37,7 @@ def read_question_number(image: Image.Image, ocr=None) -> int | None:
 
     engine = ocr
     if engine is None:
-        from .ocr_core import RapidOcrEngine
+        from ..ocr_core import RapidOcrEngine
 
         engine = RapidOcrEngine()
     text = _recognize_band(engine, band)

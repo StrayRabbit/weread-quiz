@@ -6,8 +6,8 @@ import numpy as np
 from PIL import Image
 
 from weread_quiz.blank import PLACEHOLDER, TextSpan, compose_stem, find_blank_lines
-from weread_quiz.daily_ocr import DailyOcrReader
-from weread_quiz.pk_ocr import RapidOcrReader
+from weread_quiz.daily.ocr import DailyOcrReader
+from weread_quiz.pk.ocr import RapidOcrReader
 
 
 def scene(lines=(), size=(430, 788)):

@@ -5,11 +5,11 @@ import time
 
 from PIL import Image
 
-from .daily_ocr import DailyOcrRead, DailyOcrReader, TEXT_PROMPT
-from .daily_vision import FALLBACK_RESERVE_SECONDS, text_path_deadline
-from .errors import AnswerUnavailable, OcrRejected
-from .recognition import answer_from_read, read_local, text_then_image
-from .vision import VisionQuestion, VisionService, _check_deadline
+from .ocr import DailyOcrRead, DailyOcrReader, TEXT_PROMPT
+from .vision import FALLBACK_RESERVE_SECONDS, text_path_deadline
+from ..errors import AnswerUnavailable, OcrRejected
+from ..recognition import answer_from_read, read_local, text_then_image
+from ..vision import VisionQuestion, VisionService, _check_deadline
 
 # 与 daily.py 的同名常量保持一致（数字对齐 PK 链路）。
 _IDENTIFY_BUDGET_SECONDS = 9.0
@@ -18,7 +18,7 @@ _TEXT_TIMEOUT = 5.0
 
 def _crop_card(image: Image.Image) -> Image.Image:
     """只裁模型输入；OCR 和按钮定位始终使用原图坐标。"""
-    from .daily_vision import _DAILY_CROP
+    from .vision import _DAILY_CROP
 
     return _DAILY_CROP(image) if image.size[1] > 600 else image
 
@@ -89,7 +89,7 @@ class DailyHybridReader:
     def read_question_visual(self, image: Image.Image, prompt=None, *,
                              timeout=None, deadline=None) -> VisionQuestion:
         """只走图片路径，避免本地判否后重复 OCR。"""
-        from .daily_vision import DAILY_PROMPT
+        from .vision import DAILY_PROMPT
 
         _check_deadline(deadline)
         self.ocr_fallback += 1
@@ -141,7 +141,7 @@ class DailyHybridReader:
         """复用同一张图的题号；未读过该图时才单独 OCR。"""
         if self._last_progress_image is image:
             return self._last_progress_no
-        from .daily_number import read_question_number
+        from .number import read_question_number
 
         return read_question_number(image, ocr=self._ocr)
 

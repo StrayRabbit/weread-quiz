@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from weread_quiz import pk
+from weread_quiz.pk import runner as pk
 from weread_quiz.errors import AnswerUnavailable
 from weread_quiz.models import Rect
 from weread_quiz.ocr_core import OcrRead

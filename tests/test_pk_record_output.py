@@ -2,7 +2,9 @@
 
 import pytest
 
-from weread_quiz import cli, main as wq_main, pk
+from weread_quiz import cli
+from weread_quiz import main as wq_main
+from weread_quiz.pk import runner as pk
 
 
 def question(**changes):

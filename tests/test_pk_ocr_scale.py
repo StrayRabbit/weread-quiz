@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PIL import Image
 
-from weread_quiz.pk_ocr import RapidOcrReader, _normalize_blank
+from weread_quiz.pk.ocr import RapidOcrReader, _normalize_blank
 
 
 def test_scaled_run_folds_boxes_back_to_original_image(monkeypatch):

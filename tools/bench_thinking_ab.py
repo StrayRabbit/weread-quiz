@@ -8,9 +8,9 @@ import time
 from pathlib import Path
 
 from weread_quiz.config import AppConfig
-from weread_quiz.pk_ocr import RapidOcrReader
+from weread_quiz.pk.ocr import RapidOcrReader
 from weread_quiz.vision import VisionService
-from weread_quiz.pk_ocr import TEXT_PROMPT
+from weread_quiz.pk.ocr import TEXT_PROMPT
 
 
 def collect(run_dir: Path) -> list[tuple[str, str, list[str]]]:

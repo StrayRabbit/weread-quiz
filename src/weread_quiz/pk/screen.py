@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 
 from .buttons import cyan_row_counts, find_option_buttons
-from .errors import WqError
+from ..errors import WqError
 
 # 题干所在的纵向区间。选项区不能算进去 —— 按钮动画噪声太大。
 _STEM_BAND = (250, 345)
@@ -232,13 +232,13 @@ _template_warned = False
 def _resolve_template_resource() -> Path:
     """定位打包进来的卡片模板图。"""
     try:
-        candidate = resources.files(__package__).joinpath("assets/pk_question_card.png")
+        candidate = resources.files(__package__.rpartition(".")[0]).joinpath("assets/pk_question_card.png")
         path = Path(str(candidate))
         if path.is_file():
             return path
     except (ModuleNotFoundError, TypeError, ValueError, OSError):
         pass
-    return Path(__file__).resolve().parent / "assets" / "pk_question_card.png"
+    return Path(__file__).resolve().parent.parent / "assets" / "pk_question_card.png"
 
 
 _TEMPLATE_RESOURCE = _resolve_template_resource()

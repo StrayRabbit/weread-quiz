@@ -6,7 +6,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from weread_quiz.result import is_settlement_page
-from weread_quiz.screen import has_score_row
+from weread_quiz.pk.screen import has_score_row
 
 # 青色（按钮/边框的颜色）
 CYAN = (13, 193, 255)

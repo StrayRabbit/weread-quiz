@@ -2,7 +2,7 @@
 
 from PIL import Image
 
-from weread_quiz.pk_score import read_score
+from weread_quiz.pk.score import read_score
 
 
 class Ocr:
@@ -62,7 +62,7 @@ def test_wait_keeps_the_last_card_frame_for_the_score(monkeypatch):
 
     胜负只能靠那张卡片上的「我 VS 对手」判。
     """
-    from weread_quiz import pk
+    from weread_quiz.pk import runner as pk
 
     card = object()
     settle = object()

@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 from PIL import Image
 
-from .errors import NotAQuestionScreen
-from .vision import (
+from ..errors import NotAQuestionScreen
+from ..vision import (
     VisionService,
     VisionQuestion,
     is_question,
@@ -128,7 +128,7 @@ def build_daily_vision_service(cfg, *, timing_sink=None) -> VisionService:
 
     协议由代码自己认（见 model_service 模块）—— 主模型一组，视觉模型可选。
     """
-    from .model_service import build_model_service
+    from ..model_service import build_model_service
 
     return build_model_service(
         cfg,

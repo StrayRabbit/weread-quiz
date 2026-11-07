@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from PIL import Image, ImageDraw
 
-from weread_quiz import pk
+from weread_quiz.pk import runner as pk
 
 
 class Clock:

@@ -7,11 +7,11 @@ from collections import Counter
 
 from PIL import Image
 
-from .errors import AnswerUnavailable, OcrRejected
-from .pk_budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT
-from .pk_ocr import OcrRead, RapidOcrReader, TEXT_PROMPT
-from .recognition import answer_from_read, read_local, text_then_image
-from .vision import VisionQuestion, VisionService, _check_deadline
+from ..errors import AnswerUnavailable, OcrRejected
+from .budget import PKQuestionBudget, _IMAGE_PATH_MIN_BUDGET, _TEXT_PATH_TIMEOUT
+from .ocr import OcrRead, RapidOcrReader, TEXT_PROMPT
+from ..recognition import answer_from_read, read_local, text_then_image
+from ..vision import VisionQuestion, VisionService, _check_deadline
 
 _QUESTION_WINDOW_SECONDS = 12.0
 

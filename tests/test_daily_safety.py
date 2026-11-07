@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from weread_quiz import daily
-from weread_quiz.daily_hybrid import DailyHybridReader
-from weread_quiz.daily_vision import read_daily_answer
+from weread_quiz.daily import runner as daily
+from weread_quiz.daily.hybrid import DailyHybridReader
+from weread_quiz.daily.vision import read_daily_answer
 from weread_quiz.errors import AnswerUnavailable, OcrRejected
 from test_daily_pipeline import Clock, Ocr, Vision, config, frame, read, clock, desktop
 
@@ -134,7 +134,7 @@ def test_wait_fallback_is_one_shot_not_repeated(desktop, clock):
 
 
 def test_empty_stem_never_calls_model(desktop, monkeypatch):
-    monkeypatch.setattr("weread_quiz.daily_screen.has_rendered_stem", lambda image: False)
+    monkeypatch.setattr("weread_quiz.daily.screen.has_rendered_stem", lambda image: False)
     vision = Vision()
     image, question = daily.wait_for_question(config(vision), timeout=1)
     assert image is question is None
@@ -142,14 +142,14 @@ def test_empty_stem_never_calls_model(desktop, monkeypatch):
 
 
 def test_terminal_without_explicit_text_is_interrupted(desktop, monkeypatch):
-    monkeypatch.setattr("weread_quiz.daily_buttons._detect_any_buttons", lambda image: False)
+    monkeypatch.setattr("weread_quiz.daily.buttons._detect_any_buttons", lambda image: False)
     monkeypatch.setattr(daily, "has_progress_line", lambda image: False)
     outcome = daily.wait_for_next_question(config(Vision()), desktop[0])
     assert outcome.status == "interrupted"
 
 
 def test_terminal_requires_matching_fresh_frame(desktop, monkeypatch):
-    monkeypatch.setattr("weread_quiz.daily_buttons._detect_any_buttons", lambda image: False)
+    monkeypatch.setattr("weread_quiz.daily.buttons._detect_any_buttons", lambda image: False)
     monkeypatch.setattr(daily, "has_progress_line", lambda image: False)
     terminal = SimpleNamespace(kind="revive", evidence="可以通过以下方式复活")
     cfg = config(Vision(), ocr=SimpleNamespace(read_terminal=lambda image: terminal))
@@ -183,7 +183,12 @@ def test_legacy_recognize_only_reader_is_supported():
 
 
 def test_cli_closes_vision_if_advance_fails(monkeypatch, tmp_path, capsys):
-    from weread_quiz import capture, cli, config as configuration, daily_hybrid, daily_vision, dpi
+    from weread_quiz import capture
+    from weread_quiz import cli
+    from weread_quiz import config as configuration
+    from weread_quiz.daily import hybrid as daily_hybrid
+    from weread_quiz.daily import vision as daily_vision
+    from weread_quiz import dpi
     from weread_quiz.window import finder
 
     cfg = SimpleNamespace(model_name="fake", model_thinking=True, validate_model=lambda: None)
@@ -230,7 +235,7 @@ def test_dry_run_guess_is_not_reported_as_actual_answer(desktop):
 
 
 def test_question_masks_ignore_pixels_outside_card():
-    from weread_quiz import daily_screen
+    from weread_quiz.daily import screen as daily_screen
     from PIL import ImageDraw
 
     before = frame()
@@ -258,7 +263,7 @@ def test_progress_cache_is_bound_to_source_image():
 
 @pytest.mark.parametrize("change", ["stem", "number"])
 def test_click_identity_rejects_small_content_change(change):
-    from weread_quiz import daily_screen
+    from weread_quiz.daily import screen as daily_screen
     from PIL import ImageDraw
 
     before = Image.new("RGB", (430, 788), (10, 20, 40))
@@ -362,7 +367,7 @@ def test_question_number_prefers_fast_recognition():
 
     读题号要用在「答案到了以后按题号复核」这条路上，慢不起。
     """
-    from weread_quiz import daily_number
+    from weread_quiz.daily import number as daily_number
 
     calls = []
 
@@ -382,7 +387,7 @@ def test_question_number_prefers_fast_recognition():
 
 def test_question_number_falls_back_to_detection():
     """识别模式读不出整条时退回检测模式（那条对噪声更稳）。"""
-    from weread_quiz import daily_number
+    from weread_quiz.daily import number as daily_number
 
     class Engine:
         def _engine_run_text(self, image):
@@ -402,7 +407,7 @@ def test_strip_keeps_gap_between_bands():
     （实测「数/面/唠」读成「敷面磅」）—— 拼接路本来是为单字选项准备的，
     那样就等于没有。
     """
-    from weread_quiz import daily_ocr
+    from weread_quiz.daily import ocr as daily_ocr
 
     image = Image.new("RGB", (430, 788), (20, 35, 70))
     bands = [(100, 140), (170, 210), (240, 280)]
