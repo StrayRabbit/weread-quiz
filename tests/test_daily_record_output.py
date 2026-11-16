@@ -3,6 +3,8 @@
 与 PK 共用 record.format_question_line —— 两边的终端格式必须一样。
 """
 
+import pytest
+
 from weread_quiz.daily import runner as daily
 from weread_quiz.daily.hybrid import DailyHybridReader
 from weread_quiz.models import Rect
@@ -134,3 +136,27 @@ def test_skipped_question_is_not_reported_as_answered(desktop, monkeypatch, caps
     assert lines and "跳过（screen_changed），未点击" in lines[0]
     assert lines[0].endswith("-")
     assert report.skipped == 1 and report.answered == 0
+
+
+@pytest.mark.parametrize("skipped", [True, False])
+def test_revive_log_distinguishes_no_click_from_wrong_answer(
+        desktop, monkeypatch, skipped):
+    reader = DailyHybridReader(Vision(), Ocr(read()), verbose=False)
+    recorder = _Recorder()
+    monkeypatch.setattr(daily, "AnswerFeedback", _Feedback)
+    monkeypatch.setattr(daily, "is_same_question", lambda a, b: not skipped)
+    monkeypatch.setattr(daily, "wait_for_next_question", lambda *a, **k:
+                        daily._WaitOutcome("revive", reason="读到复活文字"))
+    report = daily.run_daily(_config(reader, recorder))
+    assert report.outcome == "wrong"  # 保持现有结果枚举兼容，只修正描述。
+    if skipped:
+        assert report.answered == 0 and not desktop[1]
+        assert "未点击" in report.summary()
+        assert "答错" not in report.summary()
+        assert any("（跳过未点击）" in message and "耗时" in message
+                   for message in recorder.messages)
+        assert not any("（点击完成）" in message for message in recorder.messages)
+    else:
+        assert report.answered == 1 and len(desktop[1]) == 1
+        assert "答错" in report.summary()
+        assert any("（点击完成）" in message for message in recorder.messages)

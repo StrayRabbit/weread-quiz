@@ -51,12 +51,16 @@ class DailyReport:
     # 读不出就是没这一项 —— **绝不猜**：题号猜错比读不出更糟。
     #
     progress_numbers: list[int] | None = None
+    prop_skipped: int = 0
+    prop_uses: list[dict] | None = None
 
     def __post_init__(self) -> None:
         if self.questions is None:
             self.questions = []
         if self.progress_numbers is None:
             self.progress_numbers = []
+        if self.prop_uses is None:
+            self.prop_uses = []
 
     @property
     def guessed(self) -> list[int]:
@@ -73,11 +77,16 @@ class DailyReport:
         if self.outcome == "dry_run":
             return "dry-run：只识别了这一题的答案，未做任何点击"
         if self.outcome == "success":
+            if self.prop_skipped:
+                return f"✅ 完成全部题位，成功拿满今日奖励（作答 {self.answered} 题，道具跳题 {self.prop_skipped} 题）"
             return f"✅ 全部答对，成功拿满今日奖励（共答 {self.answered} 题）"
         if self.outcome == "fail":
             return f"❌ 答题失败，今日机会已用完（共答 {self.answered} 题）"
         if self.outcome == "wrong":
-            return f"第 {self.answered} 题答错，今日机会已用完（共答 {self.answered} 题）"
+            number = (self.questions[-1].get("progress_no") or len(self.questions)) if self.questions else self.answered
+            if self.questions and self.questions[-1].get("skipped"):
+                return f"第 {number} 题未点击，随后进入复活页（共答 {self.answered} 题）"
+            return f"第 {number} 题答错，今日机会已用完（共答 {self.answered} 题）"
         if self.outcome == "questions_exhausted":
             return f"答完 12 题（共答 {self.answered} 题）"
         if self.outcome == "final_pending":
@@ -85,6 +94,14 @@ class DailyReport:
         if self.outcome == "interrupted":
             return f"流程中断（已点击 {self.answered} 题）：{self.error}"
         return f"结束（{self.outcome}），答了 {self.answered} 题：{self.error}"
+
+    def prop_summary(self) -> str:
+        if not self.prop_uses:
+            return ""
+        skips = sum(p["kind"] == "skip" and p["confirmed"] for p in self.prop_uses)
+        swaps = sum(p["kind"] == "swap" and p["confirmed"] for p in self.prop_uses)
+        unknown = sum(not p["confirmed"] for p in self.prop_uses)
+        return f"道具：跳题卡 {skips} 次，换题卡 {swaps} 次，点击后未确认 {unknown} 次"
 
     def progress_summary(self) -> str:
         """题号对齐的汇总：漏了哪几题。"""

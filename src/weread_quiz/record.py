@@ -24,6 +24,8 @@ def question_label(result: dict, ui_number: int | None, question_no: int) -> str
 
 def question_choice(result: dict) -> str:
     """逐题行里「→」后面的内容：选了哪个 / 蒙了 / 跳过了。"""
+    if result.get("prop") == "skip":
+        return "使用跳题卡（已确认跳题）"
     if result.get("skipped"):
         # reason 是 PK 的字段名，error 是每日一答的字段名 —— 两个都认。
         reason = result.get("reason") or result.get("error") or "界面已变"
@@ -52,7 +54,7 @@ def format_question_line(result: dict, *, ui_number: int | None,
     """
     stem = (result.get("stem") or "").strip() or "(模型未给题干)"
     if mark is None:
-        mark = ("-" if result.get("skipped")
+        mark = ("-" if result.get("skipped") or result.get("prop") == "skip"
                 else FEEDBACK_MARKS.get(result.get("answer_feedback"), "?"))
     return (f"  {question_label(result, ui_number, question_no)} {stem}"
             f" → {question_choice(result)}  {mark}")

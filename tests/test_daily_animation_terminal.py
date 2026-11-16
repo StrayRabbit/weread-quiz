@@ -74,6 +74,47 @@ def test_first_question_waits_for_option_text_to_stop_changing(monkeypatch, fake
     assert reads == [frames[-1]]
 
 
+def test_normal_transition_does_not_save_partial_frame(monkeypatch, fake_clock):
+    partial = Image.new("RGB", (430, 788), (10, 20, 40))
+    ready = question_frame()
+    current = question_frame()
+    draw = ImageDraw.Draw(current)
+    draw.rectangle((140, 240, 280, 250), fill=(10, 20, 40))
+    draw.rectangle((100, 270, 320, 280), fill="white")
+    frames = iter([partial, ready, ready.copy()])
+    shots, logs, captures = [], [], []
+
+    def grab(region):
+        image = next(frames)
+        captures.append(image)
+        return image
+
+    recorder = SimpleNamespace(shot=lambda label, image=None: shots.append((label, image)),
+                               log=logs.append)
+    monkeypatch.setattr(daily, "grab_screen", grab)
+    outcome = daily.wait_for_next_question(configuration(recorder=recorder), current)
+
+    assert outcome.status == "next"
+    assert outcome.image is captures[-1]
+    assert len(captures) == 3, "仍须等到连续两帧稳定，不减少安全取帧"
+    assert fake_clock.now == 100.75
+    assert shots == [], "正常转场的半渲染帧只记日志，不编码保存 PNG"
+    assert any("进入异常等待" in line for line in logs)
+    assert any("异常等待恢复" in line for line in logs)
+
+
+def test_persistent_transition_keeps_stop_screenshot(monkeypatch, fake_clock):
+    partial = Image.new("RGB", (430, 788), (10, 20, 40))
+    shots = []
+    recorder = SimpleNamespace(shot=lambda label, image=None: shots.append((label, image)),
+                               log=lambda message: None)
+    monkeypatch.setattr(daily, "grab_screen", lambda region: partial)
+    outcome = daily.wait_for_next_question(configuration(recorder=recorder), question_frame())
+
+    assert outcome.status == "interrupted"
+    assert shots == [("stop_status", partial)], "真正超时仍保留停止现场，不保存过渡帧"
+
+
 def terminal_frame():
     image = Image.new("RGB", (430, 788), (10, 20, 40))
     draw = ImageDraw.Draw(image)

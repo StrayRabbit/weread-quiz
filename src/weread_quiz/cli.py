@@ -77,7 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     daily = sub.add_parser(
         "daily",
-        help="自动答「每日一答」一局（不使用道具/复活卡）",
+        help="自动答「每日一答」一局（可配置无答案时使用跳题卡/换题卡，不使用复活卡）",
     )
     daily.add_argument(
         "--dry-run",
@@ -273,7 +273,10 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
     print()
     if not dry_run:
         print("开始答题。鼠标会被程序控制 —— 想中止就按 Esc 键。")
-        print("注意：不会动任何道具/复活卡；答错今日机会用完。")
+        if getattr(cfg, "daily_use_props_on_failure", False):
+            print("注意：无有效答案时优先跳题、其次换题（数量和颜色均可用才点）；不使用复活卡。")
+        else:
+            print("注意：未开启自动道具，不会动任何道具/复活卡；答错今日机会用完。")
     else:
         print("dry-run 模式：只识别**当前这一题**并打印答案，不点击。")
         print("（识别完就停 —— 不点击的话界面不会换题。）")
@@ -338,6 +341,7 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
             verbose=True,
             dry_run=dry_run,
             ocr=terminal_ocr,
+            use_props_on_failure=getattr(cfg, "daily_use_props_on_failure", False),
             refresh=lambda: refresh_window(host.hwnd),
         )
         if not dry_run:
@@ -366,6 +370,10 @@ def _cmd_daily(dry_run: bool, route_name: str = "daily-days") -> int:
         if text:
             print(text)
             safe_log(recorder, text)
+    prop_summary = report.prop_summary()
+    if prop_summary:
+        print(prop_summary)
+        safe_log(recorder, prop_summary)
     if report.skipped:
         text = f"另有 {report.skipped} 题因点击前校验判定界面已变而跳过未点。"
         print(text)

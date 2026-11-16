@@ -1,4 +1,4 @@
-"""每日一答 OCR：卡片及拼接读取、独立几何、置信度门控和严格终态文字识别。"""
+"""每日一答 OCR：卡片及逐按钮读取、独立几何、置信度门控和严格终态文字识别。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from PIL import Image
 from ..advance import read_text_lines
 from ..blank import TextSpan, compose_stem, find_blank_lines
 from .buttons import _OPTION_BOTTOM, _OPTION_TOP, find_blue_gray_bands
+from .number import parse_question_number
 from .screen import has_answer_reveal
 from ..ocr_core import OcrDecision, OcrRead, RapidOcrEngine
 
@@ -49,20 +50,9 @@ _BUTTON_BOTTOM = _OPTION_BOTTOM
 _BUTTON_LEFT = 30
 _BUTTON_RIGHT = 400
 
-_STRIP_PAD_V = 6      # 按钮内文字区的上下留白
-_STRIP_LEFT = 38
-_STRIP_RIGHT = 392
-_STRIP_SCALE = 2.0
-
-# 拼接时按钮带之间的**垂直间隙**。
-#
-# 各带的文字区原本是紧挨着拼起来的（np.vstack 不留空隙），RapidOCR 的
-# 文本检测器会把三个单字当成**一条竖排文字**读出来 —— 实测
-# 「数/面/唠」读成「敷面磅」，「滔/湛/淼」读成「滔湛淼」。于是拼接路
-# 在最需要它的单字选项上必然失效（它本来就是为单字选项准备的）。
-#
-# 16px（原图尺度，放大后 32px）足以让检测器把三行分开。
-_STRIP_GAP = 16
+_TEXT_PAD_V = 6
+_TEXT_LEFT = 38
+_TEXT_RIGHT = 392
 
 _CENTER_TOLERANCE_RATIO = 0.5
 
@@ -81,17 +71,6 @@ _NOISE_PATTERNS = (
     re.compile(r"^第\s*\d+\s*题"),
     re.compile(r"共\s*\d+\s*题"),
 )
-
-# 题号行里的题号。
-_RE_PROGRESS_NO = re.compile(r"第\s*(\d+)\s*题")
-
-# 「最后一题」也是题号行，只是没有编号。
-#
-# 每日一答的卡片在最后一题把「第N题·共12题」换成「最后一题」。认不出
-# 它的话，这一题就没有题号证据 —— 门控判否、被迫回退图片路径，题干里
-# 还会混进「最后一题」三个字（2026-11-02 实测：选项读得又准又全，
-# 却因为这一行被判否）。
-_RE_PROGRESS_LAST = re.compile(r"最后一题")
 
 
 def _is_noise(text: str) -> bool:
@@ -262,7 +241,7 @@ class DailyOcrReader(RapidOcrEngine):
         if options is None:
             # 结构不合法（某个带漏读，或某个带挤进两行文字）。
             # 返回一个空选项的 read：门控会因选项数对不上而拒绝它，
-            # 而拼接路还能借它带出来的题干。
+            # 而逐按钮补读还能借它带出来的题干。
             return DailyOcrRead(
                 stem=stem,
                 options=[],
@@ -320,38 +299,56 @@ class DailyOcrReader(RapidOcrEngine):
         kind, evidence = next(iter(kinds.items()))
         return TerminalRead(kind=kind, evidence=evidence)
 
-    # -------------------------------------------------------------- 拼接路
+    # --------------------------------------------------------- 逐按钮补读
 
     def read_strip(self, image: Image.Image,
                    whole: DailyOcrRead | None = None) -> DailyOcrRead | None:
-        """按点击检测器的按钮带裁剪文字并拼接识别；复用整图题干和题号，每带必须恰好一个选项。"""
+        """兼容补读入口：按按钮裁出白字行并批量识别，不再拼接后重复检测文字。"""
         bands = find_option_bands(image)
-        if not bands:
-            return None
-        # 高亮帧同样要放弃（见 has_highlighted_button 的说明）。这一路
-        # 只读按钮文字区，深蓝灰检测器看不见被染色的那个按钮 ——
-        # 拼出来会是缺一个选项的列表，正好是错位的来源。
-        if has_highlighted_button(image):
+        if not bands or has_highlighted_button(image):
             return None
         if whole is None:
             whole = self.read(image)
-        strip = self._build_strip(image, bands)
-        if strip is None:
+        if whole is None:
             return None
-        result = self._engine_run(strip)
-        if result is None:
+        crops = []
+        indices = []
+        for index, band in enumerate(bands):
+            lines = self._button_text_crops(image, band)
+            if not lines:
+                return None
+            crops.extend(lines)
+            indices.extend([index] * len(lines))
+        if not self.warmup():
             return None
-        lines = [(text.strip(), float(confidence))
-                 for _, text, confidence in result or [] if text.strip()]
-        if not lines:
+        try:
+            output = self._engine.recognize_txt(crops)
+            texts, scores = output.txts, output.scores
+            if (texts is None or scores is None
+                    or len(texts) != len(crops) or len(scores) != len(crops)):
+                return None
+            parts = [[] for _ in bands]
+            for index, text, score in zip(indices, texts, scores, strict=True):
+                score = float(score)
+                if (not isinstance(text, str) or not text.strip()
+                        or not math.isfinite(score) or not 0.0 <= score <= 1.0):
+                    return None
+                parts[index].append((text.strip(), score))
+        except Exception:  # noqa: BLE001 - 补读不可用时仍交门控回退图片
             return None
+        options = ["".join(text for text, _ in lines) for lines in parts]
+        confidences = [min(score for _, score in lines) for lines in parts]
+        # 完整整卡读数中的低置信证据不能被一次补读高分抹掉。
+        if (whole.button_count == len(bands) and len(whole.options) == len(bands)
+                and len(whole.confidences) == len(bands)):
+            confidences = [min(a, b) for a, b in zip(whole.confidences, confidences)]
         return DailyOcrRead(
-            stem=whole.stem if whole is not None else "",
-            options=[text for text, _ in lines],
-            confidences=[confidence for _, confidence in lines],
+            stem=whole.stem,
+            options=options,
+            confidences=confidences,
             button_count=len(bands),
-            has_progress=whole.has_progress if whole is not None else False,
-            progress_no=whole.progress_no if whole is not None else None,
+            has_progress=whole.has_progress,
+            progress_no=whole.progress_no,
         )
 
     def decide(self, read: DailyOcrRead | None) -> OcrDecision:
@@ -372,6 +369,7 @@ class DailyOcrReader(RapidOcrEngine):
                       strip: DailyOcrRead | None) -> OcrDecision:
         """两路合并裁决。题号行只在整图路里有，所以界面类型判据按整图路算。"""
         decision = super().decide_merged(whole, strip)
+        decision.reason = decision.reason.replace("拼接路", "逐按钮补读").replace("拼接", "逐按钮补读")
         if not decision.accepted:
             return decision
         reference = whole if whole is not None else strip
@@ -395,33 +393,33 @@ class DailyOcrReader(RapidOcrEngine):
             Image.LANCZOS,
         )
 
-    def _build_strip(self, image: Image.Image,
-                     bands: list[tuple[int, int]]) -> Image.Image | None:
-        """将各按钮文字区纵向拼接，并放大 2 倍供 OCR 识别。
-
-        带与带之间留 `_STRIP_GAP` 的黑缝 —— 不留缝的话检测器会把几个
-        单字当成一条竖排文字读（见 `_STRIP_GAP` 的说明）。
-        """
-        array = np.asarray(image.convert("RGB"))
-        parts = []
-        for index, (top, bottom) in enumerate(bands):
-            upper, lower = top + _STRIP_PAD_V, bottom - _STRIP_PAD_V
-            if upper >= lower:
-                return None
-            if index and _STRIP_GAP:
-                parts.append(np.zeros((_STRIP_GAP, _STRIP_RIGHT - _STRIP_LEFT, 3),
-                                      dtype=array.dtype))
-            parts.append(array[upper:lower, _STRIP_LEFT:_STRIP_RIGHT])
-        if not parts:
-            return None
-        strip = np.vstack(parts)
-        try:
-            import cv2  # noqa: PLC0415
-        except ImportError:  # pragma: no cover - opencv 是硬依赖
-            return None
-        strip = cv2.resize(strip, None, fx=_STRIP_SCALE, fy=_STRIP_SCALE,
-                           interpolation=cv2.INTER_CUBIC)
-        return Image.fromarray(strip)
+    def _button_text_crops(self, image: Image.Image,
+                           band: tuple[int, int]) -> list[np.ndarray]:
+        """只在单个按钮内部紧裁白字行，避免单字被整条按钮的宽高比压扁。"""
+        top, bottom = band
+        left, right = _TEXT_LEFT, min(image.width, _TEXT_RIGHT)
+        upper, lower = max(0, top + _TEXT_PAD_V), min(image.height, bottom - _TEXT_PAD_V)
+        if upper >= lower or left >= right:
+            return []
+        array = np.asarray(image.crop((left, upper, right, lower)).convert("RGB"))
+        low = array.min(axis=2)
+        high = array.max(axis=2).astype(int)
+        white = (low > 160) & (high - low < 80)
+        rows = np.flatnonzero(white.any(axis=1))
+        if not len(rows):
+            return []
+        # 三像素以内的空行可能是字内空隙，不能拆成两行识别。
+        groups = np.split(rows, np.flatnonzero(np.diff(rows) > 3) + 1)
+        crops = []
+        for group in groups:
+            y0, y1 = int(group[0]), int(group[-1]) + 1
+            if y1 - y0 < 3:
+                continue
+            columns = np.flatnonzero(white[y0:y1].any(axis=0))
+            x0, x1 = int(columns[0]), int(columns[-1]) + 1
+            crops.append(array[max(0, y0 - 4):min(array.shape[0], y1 + 4),
+                               max(0, x0 - 4):min(array.shape[1], x1 + 4)].copy())
+        return crops
 
     def _map_options(self, lines, bands: list[tuple[int, int]]):
         """按文字中心归位到按钮带，输出从上到下的选项；每带必须恰好一个有效选项。"""
@@ -480,14 +478,10 @@ class DailyOcrReader(RapidOcrEngine):
         for center_y, x0, x1, y0, y1, text, _confidence in lines:
             span = TextSpan(x0=x0, x1=x1, y0=y0, y1=y1, text=text)
             spans.append(span)
-            match = _RE_PROGRESS_NO.search(text)
-            if match:
+            number = parse_question_number(text)
+            if number is not None:
                 has_progress = True
-                progress_no = int(match.group(1))
-                continue
-            if _RE_PROGRESS_LAST.search(text):
-                # 有题号证据，但读不出编号 —— **不猜**，编号留 None。
-                has_progress = True
+                progress_no = number
                 continue
             if _is_noise(text):
                 continue

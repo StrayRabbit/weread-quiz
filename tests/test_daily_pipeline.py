@@ -512,18 +512,19 @@ def test_dry_run_does_not_click_or_wait_next(desktop, monkeypatch):
     assert desktop[1] == []
 
 
-def test_last_question_line_counts_as_progress_evidence():
-    """卡片最后一题写的是「最后一题」—— 也是题号证据，只是没有编号。
+@pytest.mark.parametrize("label", ["最后一题", "最后一題", "最 後 一 題"])
+def test_last_question_line_counts_as_progress_evidence(label):
+    """末题标记也是题号证据，对应固定第 12 题，并从题干剔除。
 
-    认不出它，这一题就会被门控判否、被迫回退图片路径，题干里还会
-    混进「最后一题」三个字（2026-11-02 实测）。
+    繁体「題」漏识别会使本地门控判否；不保留末题身份还会让慢模型后
+    的题号复核失败，在进入无道具蒙答分支前直接跳过。
     """
     reader = DailyOcrReader()
-    lines = [(205.0, 173.0, 256.0, 198.0, 213.0, "最后一题", 0.99),
+    lines = [(205.0, 173.0, 256.0, 198.0, 213.0, label, 0.99),
              (240.0, 80.0, 340.0, 229.0, 252.0, "纳兰词里的那句话", 0.99)]
     stem, has_progress, progress_no = reader._split_stem(frame(), lines)
     assert has_progress is True
-    assert progress_no is None, "读不出编号就别猜"
+    assert progress_no == 12, "每日一答固定 12 题，末题标记是明确的界面身份"
     assert stem == "纳兰词里的那句话", "「最后一题」不是题干的一部分"
 
 

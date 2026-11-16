@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PIL import Image
 from pyautogui import FailSafeException
@@ -12,6 +12,7 @@ from ..answer_feedback import SAMPLE_OFFSETS, AnswerFeedback
 from ..capture import BLANK_REFRESH_ROUNDS, grab_screen, is_blank_frame
 from ..click import click_box
 from .buttons import find_option_buttons, pick_button
+from .props import choose_prop, has_toast, read_props
 from .screen import (
     has_answer_reveal,
     has_progress_line,
@@ -67,6 +68,17 @@ _OCR_MIN_ABNORMAL_FRAMES = 2
 
 _FINAL_SETTLE_SECONDS = 3.0
 
+# 道具点击后等生效的上限与轮询间隔。
+#
+# 界面要等服务端回包才把题号 +1，还要先让「跳题卡使用成功」的提示条
+# 消失 —— 实测 2026-11-10：提示条持续约 2 秒，题号在点击后 1.9 秒
+# 才变成 11。原来的 2 秒上限正好卡在这个边界上，差一次读数就判失败
+# —— 跳题其实成功了，却报「无法确认」，整局就此中断。
+_PROP_CONFIRM_SECONDS = 6.0
+_PROP_POLL_INTERVAL = 0.15
+# 题号要连续读到几次才算数（单次 OCR 误读不该决定换题成败）。
+_PROP_NUMBER_HITS = 2
+
 # 结算等待期间的取帧时点（相对点击，单位秒）。
 #
 # 揭示色要等服务端回包才出现（PK 实测 0.2~0.5 秒），daily 同一套界面但服务端
@@ -107,6 +119,9 @@ class DailyConfig:
     ocr: object | None = None
     # 抓到空白帧时的急救回调（重新激活小程序窗口）。
     refresh: object | None = None
+    use_props_on_failure: bool = False
+    # 道具使用记录。**点击之前就记账** —— 点击抛异常时也要留下痕迹。
+    prop_uses: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
         # region 类型在运行时是 Rect；这里只做属性存在性检查
@@ -359,8 +374,13 @@ def answer_one_question(
                      f"图龄 {age:.1f}s，按题号复核仍是第"
                      f"{_expected_progress_no(question, context)} 题，继续作答")
             image = fresh
-        result = _answer_one_question_inner(cfg, image, question, watch,
-                                            feedback=feedback)
+        result = _answer_one_question_inner(
+            cfg, image, question, watch, feedback=feedback,
+            last_question=(question_no == cfg.max_questions
+                           or _expected_progress_no(question, context) == DAILY_TOTAL_QUESTIONS),
+            progress_no=_expected_progress_no(question, context),
+            question_no=question_no,
+        )
         result["progress_no"] = (getattr(question, "progress_no", None)
                                  or getattr(context.ocr_read, "progress_no", None))
         return result
@@ -381,6 +401,9 @@ def _answer_one_question_inner(
     question,
     watch: Stopwatch | None = None,
     *, feedback: AnswerFeedback | None = None,
+    last_question: bool = False,
+    progress_no: int | None = None,
+    question_no: int = 0,
 ) -> dict:
     """答题本体。留证由 answer_one_question 的 finally 负责。
 
@@ -442,6 +465,24 @@ def _answer_one_question_inner(
                 "error": f"validation_failed: {exc}",
                 "skipped": True,
             }
+        if guessed and cfg.use_props_on_failure:
+            prop = _try_use_prop(
+                cfg, fresh,
+                progress_no=progress_no or getattr(question, "progress_no", None),
+                question_no=question_no,
+                last_question=last_question,
+            )
+            if prop is not None:
+                if watch:
+                    watch.mark("道具点击")
+                return {"stem": question.stem, "options": question.options,
+                        "answer": None, "guessed": False, "bare_index": False,
+                        "error": error, **prop}
+            # 道具 OCR 也会消耗时间；退回蒙答前不能沿用 OCR 前的校验帧。
+            fresh = grab_screen(cfg.region)
+            if not is_same_question(image, fresh) or has_answer_reveal(fresh):
+                return _skip_result(question, "screen_changed_after_prop_check")
+            box = pick_button(find_option_buttons(fresh), answer)
         click_box(box, cfg.region, pause=0.15)
         if feedback is not None:
             # 非末题：等待阶段每 0.25 秒就有一次取帧，不额外抓屏。
@@ -462,6 +503,203 @@ def _answer_one_question_inner(
         "bare_index": question.bare_index,
         "error": error,
     }
+
+
+def _try_use_prop(cfg, image, *, progress_no, question_no, last_question=False):
+    """点击已确认有数量且亮色的道具。
+
+    * 点击前的复核不过 → 返回 None，**退回蒙答**。卡片还没点，什么都没消耗，
+      没有理由为此放弃整局。
+    * 点击本身出问题 → 抛错。点击可能已经发出去，不能再蒙答。
+    """
+    states = read_props(image, cfg.ocr)
+    safe_log(cfg.recorder, "道具判读：" + (", ".join(
+        f"{_prop_name(p.kind)} 库存={p.count} 亮色={p.enabled_color}" for p in states
+    ) or "无可靠本地读数"))
+    # 跳题会让题号 +1 —— 题号读不出就无法确认跳到了哪一题，跳题卡不可用。
+    # 但**不能因此放弃换题卡**：优先级是回退链。
+    prop = choose_prop(states, last_question=last_question,
+                       allow_skip=progress_no is not None)
+    if prop is None:
+        return None
+    # OCR 之后重新取帧：题面、库存文字及颜色必须仍与判读时一致。
+    latest = grab_screen(cfg.region)
+    if not is_same_question(image, latest) or has_answer_reveal(latest):
+        _safe_shot(cfg, "prop_validation_failed", latest)
+        safe_log(cfg.recorder, "道具：点击前题面已变化，不使用道具")
+        return None
+    current = next((p for p in read_props(latest, cfg.ocr) if p.kind == prop.kind), None)
+    # 复核同样要求数量和颜色两个条件 —— 数量读不出（count=None）也算不可用。
+    if current is None or not current.available:
+        _safe_shot(cfg, "prop_validation_failed", latest)
+        safe_log(cfg.recorder, f"道具：点击前{_prop_name(prop.kind)}已不可用，不使用道具")
+        return None
+    if current.count != prop.count:
+        _safe_shot(cfg, "prop_validation_failed", latest)
+        safe_log(cfg.recorder, f"道具：点击前{_prop_name(prop.kind)}的数量已变化，不使用道具")
+        return None
+    abort.check()
+    # **先记账再点击** —— 点击抛异常时也要留下"用过一张卡"的痕迹。
+    record = {"kind": prop.kind, "question_no": question_no,
+              "progress_no": progress_no, "confirmed": False}
+    cfg.prop_uses.append(record)
+    _safe_shot(cfg, f"prop_{prop.kind}_before", latest)
+    try:
+        click_box(current.text_box, cfg.region, pause=0.15)
+    except FailSafeException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 点击可能已经发出，不允许再蒙答
+        raise WqError(f"道具点击失败，无法确认是否已消耗：{exc}") from exc
+    safe_log(cfg.recorder, f"道具点击：{prop.kind}，点击前库存 {prop.count}")
+    return {"prop": prop.kind, "prop_count": prop.count}
+
+
+def _mark_prop_confirmed(cfg, kind: str, question_no: int) -> None:
+    """把刚才那次道具点击标记为已确认生效。"""
+    for record in reversed(cfg.prop_uses):
+        if record["kind"] == kind and record["question_no"] == question_no:
+            record["confirmed"] = True
+            return
+
+
+def _prop_name(kind: str) -> str:
+    return {"skip": "跳题卡", "swap": "换题卡"}.get(kind, kind)
+
+
+def _read_prop_count(cfg, kind: str, image) -> int | None:
+    """从一帧里读某个道具的库存；读不出就是 None（不做任何推测）。"""
+    for state in read_props(image, cfg.ocr):
+        if state.kind == kind:
+            return state.count
+    return None
+
+
+def _confirm_prop_effect(cfg, kind, *, expected_number, expected_count,
+                          before_image=None):
+    """等道具生效的正面证据；返回 (是否生效, 原因, 证据帧, 取帧时刻)。
+
+    * 跳题：题号 +1 —— 界面自己写的编号不会骗人（要连续读到两次；
+      库存扣减是第二份证据，题号只读到一次但库存少了也算）。
+    * 换题：题号不变（换的是同一道题位），**加上库存扣减**。
+      题号不变单独不作数 —— 点击没生效时题号当然也不变，这条恒真。
+
+    提示条（「跳题卡使用成功」）压在题号行和题干上：它在的时候
+    题号读数不稳、题干帧差也是假的 —— **提示条没消失不算生效**，
+    交出去的帧也必须是干净的（题干上盖着提示条会让点击前的
+    同题复核误判成"题面变了"，那道题就白丢了）。
+
+    题号读不出来时（末题显示「最后一题」），换题只剩库存扣减一条证据；
+    读不出库存就判定无法确认 —— 宁可停下也不重复消耗。
+
+    **交出去的帧必须已经渲染稳定**：换题/跳题后新题面还在动画里，
+    按钮轮廓先出来、选项文字后画 —— 早一帧确认就会把半渲染题面
+    交出去，点击前的同题复核会认为题面变了，那道题就白丢了。
+    判据与「换到下一题」一致：连续两帧稳定。
+
+    **换题不能换题号**：题号变了说明是自然进入下一题，不是换题成功。
+    """
+    reader = getattr(cfg.vision, "read_progress_number", None)
+    deadline = time.monotonic() + _PROP_CONFIRM_SECONDS
+    number = None
+    count = None
+    hits = 0
+    mismatch = 0
+    number_matched = False
+    stock_dropped = False
+    changed_seen = False
+    frame = None
+    previous_frame = None
+    captured_at = time.monotonic()
+    while True:
+        captured_at = time.monotonic()
+        frame = grab_screen(cfg.region)
+        # 提示条判定放在最前面：它只读像素，不会抛异常。
+        toast = has_toast(frame)
+        # 新题面是否已经稳定：与上一帧逐像素比（同一帧才算稳定）。
+        stable = (previous_frame is not None
+                  and is_question_stable(previous_frame, frame))
+        try:
+            count = _read_prop_count(cfg, kind, frame)
+            if callable(reader):
+                number = reader(frame)
+        except FailSafeException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 读不出当"不知道"
+            safe_log(cfg.recorder, f"道具生效复核读取失败：{exc}")
+            number, count = None, None
+        if count is not None and count < expected_count:
+            stock_dropped = True
+        if expected_number is not None and number == expected_number:
+            hits += 1
+            number_matched = True
+        else:
+            hits = 0
+        if (expected_number is not None and number is not None
+                and number != expected_number):
+            mismatch += 1
+        else:
+            mismatch = 0
+        if kind == "skip":
+            # 跳题：题号 +1，且要连续两次读到（单次 OCR 误读不算数）；
+            # 库存已经扣减时，读到一次就够 —— 两份独立证据。
+            # 「读到一次」是**一次性的观察**，不因后续误读而作废。
+            ready = not toast and (
+                hits >= _PROP_NUMBER_HITS or (number_matched and stock_dropped)
+            )
+            if ready and stable and is_question_screen(frame):
+                return True, f"题号 {number}（跳题后 +1）", frame, captured_at
+        else:
+            # 题号变了 —— 不是换题，是自然进入了下一题。连续两次读到
+            # 才作数：单次 OCR 误读不能把一次成功的换题判成失败。
+            if mismatch >= _PROP_NUMBER_HITS:
+                return False, f"题号变成了 {number}（换题不应换题号）", frame, captured_at
+            # 换题：题干已经变了（提示条消失后比才作数），还要
+            # 看到库存真的少了 —— 单靠"题号没变"证明不了卡被消耗了。
+            changed = (not toast and before_image is not None
+                       and is_new_question(before_image, frame))
+            changed_seen = changed_seen or changed
+            number_ok = (expected_number is None or number is None
+                         or number == expected_number)
+            if stock_dropped and changed and number_ok and is_question_screen(frame):
+                if stable:
+                    return True, f"题干已换，库存 {expected_count} → {count}", frame, captured_at
+        previous_frame = frame
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(_PROP_POLL_INTERVAL)
+    if kind == "skip":
+        if number_matched or stock_dropped:
+            return False, f"跳题后题号已变成 {number}，但新题面始终不稳定", frame, captured_at
+        return False, f"跳题后题号没有变成 {expected_number}（读到 {number}）", frame, captured_at
+    if not stock_dropped:
+        if count is None:
+            return False, "道具使用后库存无法确认", frame, captured_at
+        return False, f"{_prop_name(kind)}库存未扣减（{expected_count} → {count}）", frame, captured_at
+    if changed_seen:
+        return False, "题干已换，但新题面始终不稳定", frame, captured_at
+    return False, "道具使用后题干没有变化", frame, captured_at
+
+
+def _wait_after_prop(cfg, image, result):
+    """等道具生效，确认后交出可以作答的新题帧。"""
+    kind = result["prop"]
+    previous = result.get("progress_no")
+    # 跳题让题号 +1；换题题号不变 —— 变了说明不是换题而是直接进下一题。
+    expected_number = (previous + 1) if (kind == "skip" and previous is not None) else previous
+    # 自己轮询等生效，不靠 wait_for_next_question 的"换到下一题"判定 ——
+    # 提示条会被误认成换题（它也改题干区像素），那一帧还是旧题。
+    confirmed, reason, frame, captured_at = _confirm_prop_effect(
+        cfg, kind, expected_number=expected_number,
+        expected_count=result["prop_count"], before_image=image,
+    )
+    if not confirmed:
+        _safe_shot(cfg, "prop_unconfirmed", frame)
+        return _WaitOutcome("interrupted", frame, f"道具使用后无法确认：{reason}")
+    _safe_shot(cfg, f"prop_{kind}_after", frame)
+    safe_log(cfg.recorder, f"道具生效：{kind}，{reason}")
+    # 用**实际抓帧时刻** —— 图龄校验靠它，别把旧帧当成新帧。
+    return _WaitOutcome("next", frame, "道具生效，新题已确认",
+                        captured_at=captured_at)
 
 
 def _looks_like_revive_page(image: Image.Image) -> bool:
@@ -616,7 +854,7 @@ def wait_for_next_question(cfg: DailyConfig, current_image: Image.Image,
             if abnormal_since is None:
                 abnormal_since = now
                 abnormal_frames = 0
-                _safe_shot(cfg, "transition_unknown", candidate)
+                # 正常转场也会短暂缺少按钮；只记日志，真正终止时由 finish 留证。
                 safe_log(cfg.recorder, "进入异常等待：无按钮或疑似复活页，尚无文字证据")
             abnormal_used += delta
             abnormal_frames += 1
@@ -713,6 +951,8 @@ def _stop_non_question(cfg, report, current, exc, watch):
 def run_daily(cfg: DailyConfig) -> DailyReport:
     """跑完一局每日一答。"""
     report = DailyReport()
+    # 道具记录只有一份 —— 点击前记账的 cfg.prop_uses 与报告共用。
+    report.prop_uses = cfg.prop_uses
     watch = Stopwatch(cfg.recorder)
     if cfg.verbose:
         print(f"等待进入答题界面（最多 {cfg.max_questions} 题）…")
@@ -732,9 +972,32 @@ def run_daily(cfg: DailyConfig) -> DailyReport:
         watch.reset(cfg.recorder)
         if question_no == 1:
             watch.mark(f"等第一题开始(启动→题面共{wait_seconds:.1f}s/{wait_polls}轮像素)")
+        prop_outcome = None
         try:
-            result = answer_one_question(cfg, current, question, question_no, watch,
-                                         capture_context=context, feedback=feedback)
+            while True:
+                result = answer_one_question(cfg, current, question, question_no, watch,
+                                             capture_context=context, feedback=feedback)
+                if not result.get("prop"):
+                    break
+                prop_outcome = _wait_after_prop(cfg, current, result)
+                if prop_outcome.status != "next":
+                    raise WqError(prop_outcome.reason)
+                _mark_prop_confirmed(cfg, result["prop"], question_no)
+                if result["prop"] == "skip":
+                    report.prop_skipped += 1
+                    break
+                # 换题仍在同一题位内：不增加 answered / questions / progress_numbers。
+                # 旧答案、预读、截图时间全部丢弃，为新题重新建立预算。
+                safe_log(cfg.recorder, f"第 {question_no} 题使用换题卡，重新识别，不增加题数")
+                if cfg.verbose:
+                    print(f"  第 {result.get('progress_no') or question_no} 题：换题卡生效，重新识别")
+                current = prop_outcome.image
+                context = DailyCaptureContext(captured_at=prop_outcome.captured_at,
+                                              confirmed_at=time.monotonic())
+                question = None
+                prop_outcome = None
+                feedback = AnswerFeedback("daily")
+                feedback.last_question = question_no == cfg.max_questions
         except NotAQuestionScreen as exc:
             watch.report(f"第 {question_no} 题（异常界面）")
             _stop_non_question(cfg, report, current, exc, watch)
@@ -765,7 +1028,7 @@ def run_daily(cfg: DailyConfig) -> DailyReport:
                     safe_log(cfg.recorder, message)
         report.questions.append(result)
         skipped = result.get("skipped", False)
-        if not skipped and not cfg.dry_run:
+        if not skipped and not cfg.dry_run and not result.get("prop"):
             # 跳过的题**不计入 answered** —— 它根本没点。
             report.answered += 1
         elif skipped:
@@ -780,6 +1043,8 @@ def run_daily(cfg: DailyConfig) -> DailyReport:
                     f"{label} {result['stem']} → 跳过"
                     f"（{result.get('error') or '界面已变'}），未点击",
                 )
+            elif result.get("prop") == "skip":
+                safe_log(cfg.recorder, f"{label} {result['stem']} → 跳题卡生效（非答案点击）")
             else:
                 chosen = (
                     result["options"][result["answer"]]
@@ -831,9 +1096,10 @@ def run_daily(cfg: DailyConfig) -> DailyReport:
                 print(format_question_line(result, ui_number=ui_number,
                                            question_no=question_no))
             return report
-        outcome = wait_for_next_question(cfg, current, watch, feedback=feedback)
-        feedback.finish(result, recorder=cfg.recorder, verbose=False,
-                        label=f"第 {ui_number or question_no} 题")
+        outcome = prop_outcome or wait_for_next_question(cfg, current, watch, feedback=feedback)
+        if result.get("prop") != "skip":
+            feedback.finish(result, recorder=cfg.recorder, verbose=False,
+                            label=f"第 {ui_number or question_no} 题")
         if cfg.verbose:
             # 逐题只打一行：题号. 题干 → 答案 ✓。
             #
@@ -841,29 +1107,27 @@ def run_daily(cfg: DailyConfig) -> DailyReport:
             # 提前打就成了「先写答案、后补对错」的两行。
             print(format_question_line(result, ui_number=ui_number,
                                        question_no=question_no))
+        action = "跳过未点击" if skipped else "跳题卡生效" if result.get("prop") else "点击完成"
         if outcome.status == "next":
             current = outcome.image
         elif outcome.status == "revive":
-            # 读到了明确的复活文字 → 答错，机会用完。
-            #
-            # 这是**唯一**能判 wrong 的路径之一：它有正面证据（页面
-            # 上的「可以通过以下方式复活」），不是靠"画面没按钮"猜的。
-            watch.report(f"第 {question_no} 题（点击完成）")
+            # 复活文字只能确认本局进入复活页；未点击时不能据此断言选错答案。
+            watch.report(f"第 {question_no} 题（{action}）")
             report.outcome = "wrong"
             report.error = outcome.reason
             return report
         elif outcome.status == "success":
-            watch.report(f"第 {question_no} 题（点击完成）")
+            watch.report(f"第 {question_no} 题（{action}）")
             report.outcome = "success"
             report.error = outcome.reason
             return report
         elif outcome.status == "fail":
-            watch.report(f"第 {question_no} 题（点击完成）")
+            watch.report(f"第 {question_no} 题（{action}）")
             report.outcome = "fail"
             report.error = outcome.reason
             return report
         else:
-            watch.report(f"第 {question_no} 题（点击完成）")
+            watch.report(f"第 {question_no} 题（{action}）")
             report.outcome = "interrupted"
             report.error = outcome.reason
             if cfg.verbose:

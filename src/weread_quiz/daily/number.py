@@ -6,6 +6,8 @@ import re
 
 from PIL import Image
 
+from .vision import DAILY_TOTAL_QUESTIONS
+
 _NUMBER_BAND = (196, 216)
 _NUMBER_LEFT = 0
 _NUMBER_RIGHT = 260
@@ -15,6 +17,16 @@ _OCR_SCALE = 3
 
 # 「第 N 题」里的 N。
 _RE_CURRENT = re.compile(r"第\s*(\d+)\s*题")
+_VARIANTS = str.maketrans({"題": "题", "後": "后"})
+
+
+def parse_question_number(text: str) -> int | None:
+    """统一卡片预读和点击前复核；明确的末题标记对应固定第 12 题。"""
+    normalized = "".join(text.translate(_VARIANTS).split())
+    if normalized == "最后一题":
+        return DAILY_TOTAL_QUESTIONS
+    match = _RE_CURRENT.search(normalized)
+    return int(match.group(1)) if match else None
 
 
 def read_question_number(image: Image.Image, ocr=None) -> int | None:
@@ -49,8 +61,7 @@ def read_question_number(image: Image.Image, ocr=None) -> int | None:
         text = "".join(line[1] for line in (result or []) if line[1].strip())
     if not text:
         return None
-    match = _RE_CURRENT.search(text)
-    return int(match.group(1)) if match else None
+    return parse_question_number(text)
 
 
 def _recognize_band(engine, band) -> str:

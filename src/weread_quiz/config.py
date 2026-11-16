@@ -119,6 +119,8 @@ class AppConfig:
     # 实测（69 道带标准答案的真实题）：决策模型答错的 10 道里 9 道置信度
     # ≤ 0.76。门槛 0.8 → 30% 的题转给视觉模型复核，答对率 85.5% → 98.6%。
     model_min_confidence: float | None = None
+    # daily 无有效答案时允许消耗跳题卡/换题卡；默认不消耗用户道具。
+    daily_use_props_on_failure: bool = False
 
     @property
     def model_configured(self) -> bool:
@@ -287,6 +289,7 @@ class AppConfig:
             vision_retries=vision_retries,
             guess_on_failure=_env_flag("GUESS_ON_FAILURE", True),
             model_thinking=_env_flag("MODEL_THINKING", True),
+            daily_use_props_on_failure=_env_flag("DAILY_USE_PROPS_ON_FAILURE", False),
             ocr_min_confidence=ocr_min_confidence,
             daily_ocr_min_confidence=daily_ocr_min_confidence,
             pk_next_question_delay=pk_next_question_delay,

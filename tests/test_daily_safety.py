@@ -385,6 +385,81 @@ def test_question_number_prefers_fast_recognition():
     assert calls == ["text"]
 
 
+@pytest.mark.parametrize("label", ["最后一题", "最后一題", "最 後 一 題"])
+@pytest.mark.parametrize("fast", [True, False])
+def test_last_question_number_supports_both_ocr_modes(label, fast):
+    from weread_quiz.daily.number import read_question_number
+
+    class Engine:
+        def _engine_run_text(self, image):
+            return [(label, 0.99)] if fast else None
+
+        def _engine_run(self, image):
+            assert not fast, "末题也应走快速识别，不额外做检测"
+            return [(None, label, 0.99)]
+
+    assert read_question_number(Image.new("RGB", (430, 788)), ocr=Engine()) == 12
+
+
+@pytest.mark.parametrize("option_count", [2, 3])
+@pytest.mark.parametrize("current_number,revealed", [(12, False), (11, False), (12, True), (None, False)])
+def test_last_question_timeout_without_props_guesses_only_if_still_same(
+        desktop, clock, monkeypatch, current_number, revealed, option_count):
+    """末题模型耗尽预算：确认同题后无道具就蒙答，而不是图龄超限跳过。"""
+    from weread_quiz.daily.number import read_question_number
+    from weread_quiz.daily.ocr import DailyOcrReader
+    from weread_quiz.daily.props import PropState
+    from weread_quiz.errors import RecognitionTimeout
+    from weread_quiz.models import Rect
+
+    evidence = read(count=option_count)
+    evidence.stem, evidence.has_progress, evidence.progress_no = DailyOcrReader()._split_stem(
+        desktop[0], [(205.0, 173.0, 256.0, 198.0, 213.0, "最后一題", 0.99),
+                     (240.0, 80.0, 340.0, 229.0, 252.0, "莫扎特逝世时，完成了《安魂曲》多少？", 0.99)])
+
+    class Engine:
+        def _engine_run_text(self, image):
+            label = "最后一題" if current_number == 12 else (
+                "第11题·共12题" if current_number == 11 else "无法识别")
+            return [(label, 0.99)]
+
+    class TimeoutVision(Vision):
+        def answer_from_text(self, *a, **k):
+            clock.sleep(9)
+            raise RecognitionTimeout("deadline_exceeded")
+
+        def read_question(self, *a, **k):
+            clock.sleep(9)
+            raise RecognitionTimeout("deadline_exceeded")
+
+    reader = DailyHybridReader(TimeoutVision(), Ocr(evidence), verbose=False)
+    reader.read_progress_number = lambda image: read_question_number(image, ocr=Engine())
+    monkeypatch.setattr(daily, "has_progress_line", lambda image: True)
+    monkeypatch.setattr(daily, "has_answer_reveal", lambda image: revealed)
+    prop_checks = []
+
+    def unavailable_props(*a):
+        prop_checks.append(True)
+        return [PropState("skip", 0, False, Rect(44, 630, 163, 70)),
+                PropState("swap", 0, False, Rect(224, 630, 163, 70))]
+
+    monkeypatch.setattr(daily, "read_props", unavailable_props)
+    cfg = config(reader, use_props_on_failure=True)
+    result = daily.answer_one_question(
+        cfg, desktop[0], None, 12,
+        capture_context=daily.DailyCaptureContext(captured_at=100.0))
+
+    if current_number == 12 and not revealed:
+        assert not result.get("skipped")
+        assert result["guessed"] and result["answer"] == 0
+        assert result["progress_no"] == 12
+        assert desktop[1] == [320]
+        assert prop_checks and cfg.prop_uses == []
+    else:
+        assert result["skipped"] and result["error"] == "capture_too_old"
+        assert not desktop[1] and not prop_checks
+
+
 def test_question_number_falls_back_to_detection():
     """识别模式读不出整条时退回检测模式（那条对噪声更稳）。"""
     from weread_quiz.daily import number as daily_number
@@ -400,20 +475,9 @@ def test_question_number_falls_back_to_detection():
                                              ocr=Engine()) == 2
 
 
-def test_strip_keeps_gap_between_bands():
-    """拼接路必须留缝。
-
-    不留缝的话 RapidOCR 的检测器会把几个单字当成一条竖排文字读出来
-    （实测「数/面/唠」读成「敷面磅」）—— 拼接路本来是为单字选项准备的，
-    那样就等于没有。
-    """
+def test_button_without_white_text_is_not_sent_to_recognizer():
+    """按钮没有白字时不发送空裁图，避免单行识别器凭空补字。"""
     from weread_quiz.daily import ocr as daily_ocr
 
     image = Image.new("RGB", (430, 788), (20, 35, 70))
-    bands = [(100, 140), (170, 210), (240, 280)]
-    strip = daily_ocr.DailyOcrReader()._build_strip(image, bands)
-    assert strip is not None
-    text_height = sum(bottom - top - 2 * daily_ocr._STRIP_PAD_V
-                       for top, bottom in bands)
-    expected = text_height + daily_ocr._STRIP_GAP * (len(bands) - 1)
-    assert strip.size[1] == expected * daily_ocr._STRIP_SCALE
+    assert daily_ocr.DailyOcrReader()._button_text_crops(image, (307, 353)) == []
