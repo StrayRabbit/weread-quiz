@@ -282,6 +282,30 @@ def _check_deadline(deadline: float | None) -> None:
         raise RecognitionTimeout("deadline_exceeded")
 
 
+# 判「阶段预算用尽」时的时钟容差（秒）。只吸收浮点与调度抖动。
+_PHASE_EPSILON = 0.001
+
+
+def _phase_budget_spent(deadline: float | None, request_start: float,
+                         effective: float | None) -> bool:
+    """这次 HTTP 超时是不是**阶段预算**用尽，而不是普通请求失败。
+
+    判据：请求若按自己的超时上限跑满，就会碰到绝对截止时间 —— 那就是
+    阶段到点（文本阶段超时），上层必须停止并蒙答，不能再回退图片路径。
+
+    **不能拿「截止时间 - 现在」跟超时上限比**：阶段截止时间是在 HTTP
+    客户端准备**之前**算出来的，客户端准备要花掉几毫秒，于是截止时间
+    反而比超时上限更远 —— 实测差 9 毫秒，超时因此被误判成普通失败，
+    错误地串行回退了图片路径（2026-11-16 CI 实测）。
+
+    所以改用请求真正发出的时刻：截止时间落在「请求开始 + 超时上限」
+    这个窗口内，就算阶段预算用尽。
+    """
+    if deadline is None or effective is None:
+        return False
+    return deadline - request_start <= effective + _PHASE_EPSILON
+
+
 class VisionService:
     """调用视觉模型识别题目并判答案。"""
 
@@ -441,7 +465,8 @@ class VisionService:
         path = "image" if any(item.get("type") == "image_url" for item in content) else "text"
         reason, finish_reason, content_type = "request_failed", "unknown", "missing"
         content_empty, thinking = True, "unknown"
-        deadline_limited = False
+        request_start = 0.0
+        effective = None
         try:
             _check_deadline(deadline)
             # max_tokens 必须给够：推理模型的 <think> 思考块也吃 token。
@@ -462,11 +487,11 @@ class VisionService:
             try:
                 trace_options = ({"extensions": {"trace": timing.trace}}
                                  if self._timing_sink is not None else {})
-                deadline_limited = (deadline is not None
-                                    and deadline - time.monotonic() <= min(
-                                        self._timeout,
-                                        timeout if timeout is not None else self._timeout))
                 options = self._timeout_option(timeout, deadline=deadline)
+                # 请求真正发出的时刻与实际生效的超时上限 ——
+                # 判断「这次超时是不是阶段预算用尽」全靠这两个值。
+                request_start = time.monotonic()
+                effective = getattr(options.get("timeout"), "read", None)
                 with timing.stage("HTTP总计"):
                     resp = client.post(self._url, json=payload, headers=self._headers,
                                        **trace_options, **options)
@@ -523,8 +548,8 @@ class VisionService:
             if deadline is not None:
                 if isinstance(exc, RecognitionTimeout) or time.monotonic() >= deadline:
                     reason = "deadline_exceeded"
-                elif isinstance(exc, httpx.TimeoutException) and deadline_limited:
-                    # deadline 限制的 HTTP 超时可能提前返回，仍须阻止文本转图片。
+                elif isinstance(exc, httpx.TimeoutException) and _phase_budget_spent(
+                        deadline, request_start, effective):
                     reason = "request_timeout"
                 self._failure_summary(path, reason, started, deadline, type(exc).__name__,
                                       finish_reason, content_type, content_empty, thinking)

@@ -37,6 +37,25 @@ def test_expired_http_deadline_is_rejected_before_request(monkeypatch):
         vision._timeout_option(3.0, deadline=100.0)
 
 
+def test_http_timeout_at_phase_budget_is_a_phase_timeout(monkeypatch):
+    """请求超时上限等于阶段预算时，超时就是阶段到点，不能降级成普通失败。
+
+    阶段截止时间在 HTTP 客户端准备**之前**算出，客户端准备要花掉几毫秒，
+    截止时间因此比请求超时上限更远 —— 只比「截止时间 - 现在」会漏判。
+    """
+    now = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+
+    def handle(request):
+        now[0] += 0.14  # 超时比阶段截止时间早 10ms 返回。
+        raise httpx.ReadTimeout("timeout", request=request)
+
+    with VisionService("http://example.invalid", "test", "test") as vision:
+        vision._client = httpx.Client(transport=httpx.MockTransport(handle))
+        with pytest.raises(RecognitionTimeout, match="request_timeout"):
+            vision.answer_from_text("题目", 2, timeout=0.15, deadline=100.15)
+
+
 @pytest.mark.parametrize("request_timeout,service_timeout,deadline", [
     (1.0, 10.0, 109.0),
     (None, 1.0, 109.0),
