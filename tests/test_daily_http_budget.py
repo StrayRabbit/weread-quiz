@@ -4,6 +4,7 @@ import json
 import threading
 import time
 
+import httpx
 import pytest
 
 from weread_quiz.daily import hybrid as hybrid_module
@@ -81,3 +82,52 @@ def test_daily_http_text_outcome_controls_image_fallback(monkeypatch, entry, res
         server.shutdown()
         server.server_close()
         worker.join(timeout=1.0)
+
+
+@pytest.mark.parametrize("entry", ["daily", "hybrid"])
+@pytest.mark.parametrize("timeout_type", [
+    httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout,
+])
+def test_early_http_timeout_never_falls_back_to_image(monkeypatch, entry, timeout_type):
+    """HTTP 超时早于绝对 deadline 也必须走超时分支，不能降级成普通失败。"""
+    now = [100.0]
+    requests = []
+    logs = []
+    image = frame()
+    boxes = [Rect(60, 320 + index * 70, 310, 44) for index in range(3)]
+    clicks = []
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(daily, "_TEXT_TIMEOUT", 0.15)
+    monkeypatch.setattr(hybrid_module, "_TEXT_TIMEOUT", 0.15)
+    monkeypatch.setattr(daily, "grab_screen", lambda _: image)
+    monkeypatch.setattr(daily, "find_option_buttons", lambda _: boxes)
+    monkeypatch.setattr(daily, "is_question_screen", lambda _: True)
+    monkeypatch.setattr(daily, "is_same_question", lambda *_: True)
+    monkeypatch.setattr(daily, "click_box", lambda box, *a, **kw: clicks.append(box))
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append(any(item.get("type") == "image_url"
+                            for item in payload["messages"][0]["content"]))
+        now[0] += 0.14  # 模拟 Windows 上 HTTP 超时先于 deadline 约 10ms 返回。
+        raise timeout_type("PRIVATE_EXCEPTION", request=request)
+
+    with VisionService("http://example.invalid", "PRIVATE_KEY", "test",
+                       timing_sink=logs.append) as service:
+        service._client = httpx.Client(transport=httpx.MockTransport(handle))
+        reader = DailyHybridReader(service, Ocr(read()), verbose=False)
+        if entry == "daily":
+            context = daily.DailyCaptureContext(captured_at=100.0, confirmed_at=100.0)
+            result = daily.answer_one_question(config(reader), image, None, 1,
+                                              capture_context=context)
+            assert result["guessed"] is True
+            assert result["answer"] == 0
+            assert clicks == [boxes[0]]
+        else:
+            with pytest.raises(RecognitionTimeout, match="request_timeout"):
+                reader.read_question(image, deadline=109.0)
+        assert now[0] < 100.15, "异常处理不能靠等到 deadline 才辨认超时"
+        assert requests == [False], "超时后不请求图片、不重试文本"
+        assert any("reason=request_timeout" in line for line in logs)
+        assert all("PRIVATE_KEY" not in line and "PRIVATE_EXCEPTION" not in line
+                   for line in logs)

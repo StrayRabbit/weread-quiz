@@ -441,6 +441,7 @@ class VisionService:
         path = "image" if any(item.get("type") == "image_url" for item in content) else "text"
         reason, finish_reason, content_type = "request_failed", "unknown", "missing"
         content_empty, thinking = True, "unknown"
+        deadline_limited = False
         try:
             _check_deadline(deadline)
             # max_tokens 必须给够：推理模型的 <think> 思考块也吃 token。
@@ -461,6 +462,10 @@ class VisionService:
             try:
                 trace_options = ({"extensions": {"trace": timing.trace}}
                                  if self._timing_sink is not None else {})
+                deadline_limited = (deadline is not None
+                                    and deadline - time.monotonic() <= min(
+                                        self._timeout,
+                                        timeout if timeout is not None else self._timeout))
                 options = self._timeout_option(timeout, deadline=deadline)
                 with timing.stage("HTTP总计"):
                     resp = client.post(self._url, json=payload, headers=self._headers,
@@ -518,9 +523,12 @@ class VisionService:
             if deadline is not None:
                 if isinstance(exc, RecognitionTimeout) or time.monotonic() >= deadline:
                     reason = "deadline_exceeded"
+                elif isinstance(exc, httpx.TimeoutException) and deadline_limited:
+                    # deadline 限制的 HTTP 超时可能提前返回，仍须阻止文本转图片。
+                    reason = "request_timeout"
                 self._failure_summary(path, reason, started, deadline, type(exc).__name__,
                                       finish_reason, content_type, content_empty, thinking)
-                if reason == "deadline_exceeded":
+                if reason in ("deadline_exceeded", "request_timeout"):
                     raise RecognitionTimeout(reason) from None
                 raise AnswerUnavailable(reason) from None
             raise

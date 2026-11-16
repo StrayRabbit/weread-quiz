@@ -1,6 +1,7 @@
 """请求预算、图片解析结构诊断与 daily 蒙答日志回归。"""
 import time
 
+import httpx
 import pytest
 from PIL import Image
 
@@ -34,6 +35,35 @@ def test_expired_http_deadline_is_rejected_before_request(monkeypatch):
     vision = VisionService("http://example.invalid", "PRIVATE_KEY", "test")
     with pytest.raises(RecognitionTimeout):
         vision._timeout_option(3.0, deadline=100.0)
+
+
+@pytest.mark.parametrize("request_timeout,service_timeout,deadline", [
+    (1.0, 10.0, 109.0),
+    (None, 1.0, 109.0),
+    (1.0, 10.0, None),
+])
+def test_short_http_timeout_preserves_legacy_none_and_client_reuse(
+        monkeypatch, request_timeout, service_timeout, deadline):
+    now = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        if len(requests) == 1:
+            now[0] += 1.0
+            raise httpx.ReadTimeout("timeout", request=request)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"answer_index":1}'}}],
+        })
+
+    with VisionService("http://example.invalid", "test", "test",
+                       timeout=service_timeout) as vision:
+        vision._client = httpx.Client(transport=httpx.MockTransport(handle))
+        assert vision.answer_from_text("题目", 2, timeout=request_timeout,
+                                       deadline=deadline) is None
+        assert vision.answer_from_text("题目", 2, deadline=deadline) == 1
+    assert len(requests) == 2
 
 
 def test_unspecified_http_timeout_keeps_client_default():
